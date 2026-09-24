@@ -13,5 +13,6 @@ issue tracker.
 
 | Note | Topic | Status |
 |---|---|---|
+| [01](01-sip-rtp-and-exposing-asterisk.md) | SIP, SDP, RTP, Asterisk, PJSIP and AMI from zero; how a packet from the Wi-Fi reaches Asterisk on this laptop, and what opening it exposes | Written for [Should SIP and RTP accept packets only from the local subnet?](https://github.com/qvd808/agent-emergency-call/issues/30) |
 
-No notes yet. Rows are added as notes are written.
+Rows are added as notes are written.
