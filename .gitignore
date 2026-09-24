@@ -1,0 +1,8 @@
+# Secrets (CONTEXT.md: never commit secrets)
+.env
+
+# Local-only
+CONTEXT.md
+
+# Per-machine Claude Code overrides
+.claude/settings.local.json

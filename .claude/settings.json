@@ -1,0 +1,71 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(/**)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(gh issue *)",
+      "Bash(gh label create *)",
+      "Bash(gh label list *)",
+      "Bash(gh api repos/qvd808/agent-emergency-call/issues*)"
+    ],
+    "deny": [
+      "Bash(gh issue delete *)"
+    ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/subagent-gate.sh",
+            "timeout": 10,
+            "statusMessage": "Checking subagent limit"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/subagent-gate.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/subagent-gate.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/subagent-gate.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

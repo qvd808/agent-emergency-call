@@ -1,0 +1,3 @@
+interface:
+  display_name: "Knowledge note"
+  short_description: "Write knowledge notes in dependency order"
