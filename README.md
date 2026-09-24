@@ -57,5 +57,8 @@ repo lives in the Ubuntu WSL distro.
    Keep Linphone open on screen; a phone that stops answering Asterisk's checks shows
    `Unavail`, and calls to it fail until it registers again.
 5. Dial 2000 from the phone, and 1001 from the iPad.
-6. `make asterisk-down` afterwards. While Asterisk runs, anything that can reach the laptop can
+6. To reach the agent, start it in another terminal and dial 3100. `make agent` echoes your
+   voice back. `make agent-test-wav` first plays a synthetic 12 s test clip (beeps once a
+   second, a steady tone, a rising sweep that fades out), then echoes.
+7. `make asterisk-down` afterwards. While Asterisk runs, anything that can reach the laptop can
    send it SIP.

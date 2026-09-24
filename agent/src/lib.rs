@@ -4,4 +4,5 @@
 //! A library as well as a binary, so the eval's fake client runs the same AudioSocket code
 //! path as a real call (issue #25).
 
+pub mod audio;
 pub mod telephony;

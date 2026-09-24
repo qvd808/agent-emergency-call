@@ -4,5 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
+hound = "3.5.1"
+rubato = "5.0.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 turn = { path = "../turn" }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["test-util", "rt", "macros", "time", "io-util"] }
