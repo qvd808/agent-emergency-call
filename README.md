@@ -5,7 +5,7 @@ Asterisk PBX, or the server calls them. An AI agent runs a short spoken check-in
 emergency is transferred to a human dispatcher extension. Everything runs on one laptop over
 local Wi-Fi, using synthetic data only.
 
-**Status: skeleton.** Nothing below has placed a call yet. The plan is tracked on the
+**Status: two phones call each other through Asterisk.** There is no agent yet. The plan is tracked on the
 [map issue](https://github.com/qvd808/agent-emergency-call/issues/1).
 
 ## Safety rules
@@ -30,4 +30,32 @@ docker-compose.yml   Asterisk only; the agent and Ollama run natively in Ubuntu
 
 ## Running
 
-`make` lists the targets. Setup steps and how to place a test call come with the first call.
+`make` lists the targets. Asterisk runs in a container on Docker Desktop (WSL 2 backend); the
+repo lives in the Ubuntu WSL distro.
+
+### Placing a test call
+
+1. `make asterisk-build` once, then `make asterisk-up`. The first run generates the two SIP
+   passwords into `.env`. Every run reads the laptop's current Wi-Fi address and restarts
+   Asterisk with it.
+2. `make sip-accounts` prints what to type into each softphone.
+3. Set up Linphone on two devices on the same Wi-Fi as the laptop. Choose the option for your
+   own SIP account, not a linphone.org one.
+
+   | | 1001, the resident | 2000, the dispatcher |
+   |---|---|---|
+   | Device used for the first call | Android phone | iPad |
+   | Username, password | from `make sip-accounts` | from `make sip-accounts` |
+   | Domain | the address `make sip-accounts` prints | the same address |
+   | Transport | UDP | UDP |
+   | Permissions | Microphone | Microphone, and Local Network (iOS asks on first use) |
+
+   Turn off STUN, ICE and media encryption in both. Without the microphone permission, the call
+   connects but that side sends no voice. Without Local Network, an iOS device can't reach the
+   laptop at all.
+4. `make asterisk-cli`, then `pjsip show contacts`: both phones show `Avail` once registered.
+   Keep Linphone open on screen; a phone that stops answering Asterisk's checks shows
+   `Unavail`, and calls to it fail until it registers again.
+5. Dial 2000 from the phone, and 1001 from the iPad.
+6. `make asterisk-down` afterwards. While Asterisk runs, anything that can reach the laptop can
+   send it SIP.

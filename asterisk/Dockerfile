@@ -9,10 +9,16 @@ ARG ASTERISK_SHA256=3bd5ee040509a3d3cd9b1ba9520c18e6ec0a7e7981ca68c457dcd36ba3c5
 # Build set: the "basic build" and "basic requirements" lists in the tarball's
 # contrib/scripts/install_prereq:19-22. wget, bzip2 and patch fetch and patch the bundled
 # pjproject (install_prereq:31-33); ca-certificates lets curl and wget use HTTPS.
+#
+# libssl-dev is on the "addons" list (install_prereq:25), but res_pjsip can't load without it.
+# With the bundled pjproject, Asterisk always defines HAVE_PJSIP_TLS_TRANSPORT_RESTART
+# (third-party/pjproject/configure.m4:141), so res_pjsip.so calls pjsip_tls_transport_restart.
+# pjproject builds that function only with OpenSSL. Without it, loading res_pjsip.so failed
+# with "undefined symbol: pjsip_tls_transport_restart". No call uses TLS.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       build-essential pkg-config autoconf-archive \
-      libedit-dev libjansson-dev libsqlite3-dev uuid-dev libxml2-dev \
+      libedit-dev libjansson-dev libsqlite3-dev uuid-dev libxml2-dev libssl-dev \
       wget bzip2 patch curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
@@ -36,5 +42,15 @@ RUN ./configure \
  && make install
 
 # No `make samples`: /etc/asterisk holds only what docker-compose.yml mounts from
-# asterisk/config, so every line of config in use is one this repo commits.
+# asterisk/config, so every line of config in use is one this repo commits, or one
+# asterisk/configure.sh generates.
+
+# Asterisk runs as its own unprivileged user (issue #30). The directories it writes at run time
+# are handed to that user: the AstDB (registered phones) under /var/lib, logs under /var/log,
+# and the control socket that `asterisk -r` connects to under /var/run.
+RUN useradd --system --user-group --no-create-home --shell /usr/sbin/nologin asterisk \
+ && chown -R asterisk:asterisk \
+      /var/lib/asterisk /var/spool/asterisk /var/log/asterisk /var/run/asterisk /var/cache/asterisk
+USER asterisk
+
 CMD ["asterisk", "-f", "-vvv"]

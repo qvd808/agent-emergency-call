@@ -7,10 +7,18 @@ services:
     # are published as ports instead (issue #26).
     ports:
       - "5060:5060/udp"
-      # Must match rtpstart/rtpend in asterisk/config/rtp.conf, and the Windows firewall rule.
+      # Must match rtpstart/rtpend in asterisk/config/rtp.conf.
       - "10000-10099:10000-10099/udp"
-      # AMI and the AudioSocket path between this container and the agent are decided in
-      # "How do Asterisk under Docker Desktop and the agent in Ubuntu reach each other?" (#27).
+      # AMI goes on 127.0.0.1:5038 only (issue #27), added by the task that writes
+      # manager.conf.
     volumes:
       - ./asterisk/config:/etc/asterisk:ro
-    restart: unless-stopped
+    # Runs only between `make asterisk-up` and `make asterisk-down`, never on its own after a
+    # reboot or a Docker Desktop restart (issue #30).
+    restart: "no"
+    # The image already runs as a non-root user (asterisk/Dockerfile). On top of that, drop
+    # every Linux capability and block regaining any through a setuid binary (issue #30).
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

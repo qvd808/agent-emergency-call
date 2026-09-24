@@ -1,0 +1,2 @@
+# Holds the SIP passwords; written by asterisk/configure.sh. Never commit it.
+pjsip_generated.conf
