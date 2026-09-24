@@ -16,6 +16,11 @@ The human who receives escalations, missed check-in alerts and concern flags. Ne
 or an emergency service.
 _Avoid_: operator, emergency services, 911
 
+**Bystander**:
+Anyone other than the resident whose voice reaches a check-in from the resident's end of the
+line, such as a visiting grandchild or a television.
+_Avoid_: caller, third party
+
 ### Calls
 
 **Check-in**:
