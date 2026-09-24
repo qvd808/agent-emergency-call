@@ -6,3 +6,10 @@ CONTEXT.md
 
 # Per-machine Claude Code overrides
 .claude/settings.local.json
+
+# Rust build output
+/target/
+
+# Call logs, one JSON file per call; the directory itself is kept
+/calls/*
+!/calls/.gitkeep

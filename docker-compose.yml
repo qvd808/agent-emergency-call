@@ -1,0 +1,16 @@
+# Asterisk only. The agent and Ollama run natively in Ubuntu (issue #26).
+services:
+  asterisk:
+    build: ./asterisk
+    image: agent-emergency-call/asterisk:22.11.0
+    # Docker Desktop documents host networking for localhost traffic only, so SIP and RTP
+    # are published as ports instead (issue #26).
+    ports:
+      - "5060:5060/udp"
+      # Must match rtpstart/rtpend in asterisk/config/rtp.conf, and the Windows firewall rule.
+      - "10000-10099:10000-10099/udp"
+      # AMI and the AudioSocket path between this container and the agent are decided in
+      # "How do Asterisk under Docker Desktop and the agent in Ubuntu reach each other?" (#27).
+    volumes:
+      - ./asterisk/config:/etc/asterisk:ro
+    restart: unless-stopped

@@ -1,0 +1,7 @@
+# One Rust process runs the whole live call; Python is offline only (issue #25).
+[workspace]
+resolver = "3"
+members = ["agent", "turn", "eval"]
+
+[workspace.package]
+edition = "2024"
