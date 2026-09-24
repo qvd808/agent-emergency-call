@@ -1,7 +1,7 @@
 # One target per build step. `make` alone lists them.
 .DEFAULT_GOAL := help
 .PHONY: help asterisk-build asterisk-config asterisk-up asterisk-down asterisk-logs asterisk-cli \
-	sip-accounts agent test-wav agent-test-wav test eval
+	sip-accounts models agent test-wav agent-test-wav test eval
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-15s %s\n", $$1, $$2}'
@@ -29,8 +29,16 @@ asterisk-cli: ## Open the Asterisk console
 sip-accounts: ## Print what to type into the two softphones, passwords included
 	@asterisk/configure.sh accounts
 
+# Silero VAD and whisper tiny.en, into models/ (gitignored). URLs as fetched 2026-09-24.
+models: ## Download the VAD and speech-to-text models
+	mkdir -p models
+	cd models && test -f silero_vad.onnx || curl -fL -O https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx
+	cd models && test -f ggml-tiny.en.bin || curl -fL -O https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+
+# --release: whisper built without optimisation is far too slow for a live call (inferred;
+# only release builds were timed).
 agent: ## Run the agent natively in Ubuntu
-	cargo run -p agent
+	cargo run --release -p agent
 
 # A synthetic 12 s clip at 22.05 kHz, Piper's usual rate, so it is resampled twice on the
 # way out, as the agent's speech will be. 0-5 s: a short 440 Hz beep on every second, to
@@ -45,8 +53,8 @@ test-wav: ## Write the synthetic test clip for a live call (needs ffmpeg)
 		if(lt(t,8), sin(2*PI*440*t), sin(2*PI*300/(log(7000/300)/4)*(exp(log(7000/300)/4*(t-8))-1))))':s=22050:d=12" \
 		-c:a pcm_s16le $(TEST_WAV)
 
-agent-test-wav: test-wav ## Run the agent: each call plays the test clip, then echoes
-	TEST_WAV=$(TEST_WAV) cargo run -p agent
+agent-test-wav: test-wav ## Run the agent: each call plays the test clip, then listens
+	TEST_WAV=$(TEST_WAV) cargo run --release -p agent
 
 test: ## Run the Rust tests
 	cargo test --workspace

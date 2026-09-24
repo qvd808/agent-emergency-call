@@ -1,7 +1,7 @@
-//! For now, a test harness for the Media half of the telephony seam (issue #16). On each call
-//! it plays the WAV named by `TEST_WAV` into the call at real-time pace, then echoes the
-//! caller's voice back. Without `TEST_WAV` it only echoes, as issue #15 did. Both directions
-//! go through the same path the agent will use: 8 kHz on the line, 16 kHz inside.
+//! For now, a harness for hearing the resident (issue #17). On each call it transcribes what
+//! the resident says and logs each utterance with how soon its text was ready. With
+//! `TEST_WAV` set, it first plays that WAV into the call at real-time pace, as issue #16 did.
+//! The audio goes through the same path the agent will use: 8 kHz on the line, 16 kHz inside.
 //!
 //! Asterisk connects to us: the dialplan's `AudioSocket()` dials `host.docker.internal:9092`,
 //! which reaches this process on `127.0.0.1` (issue #27). Only loopback, so nothing on the
@@ -11,14 +11,19 @@ use std::path::Path;
 use std::time::Instant;
 
 use agent::audio::{CORE_RATE_HZ, resample_clip};
+use agent::listen::listen;
+use agent::stt::{Stt, Whisper};
 use agent::telephony::{core_duration, line};
+use turn::vad::Silero;
 use tokio::net::{TcpListener, TcpStream};
 
 /// Must match the port in `asterisk/config/extensions.conf`, extension 3100.
 const DEFAULT_LISTEN: &str = "127.0.0.1:9092";
 
-/// The mark placed after the test WAV.
-const END_OF_CLIP: u64 = 1;
+/// Where `make models` puts them. `tiny.en` is the fastest of `tiny.en`, `base.en` and
+/// `small.en` on this laptop's CPU, and the only one inside the 1 s budget (issue #17).
+const DEFAULT_WHISPER_MODEL: &str = "models/ggml-tiny.en.bin";
+const DEFAULT_VAD_MODEL: &str = "models/silero_vad.onnx";
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -29,22 +34,26 @@ async fn main() -> Result<(), Error> {
         Some(path) => {
             let clip = load_wav(Path::new(&path))?;
             let secs = core_duration(clip.len()).as_secs_f64();
-            eprintln!("agent: each call plays {path} ({secs:.2} s), then echoes");
+            eprintln!("agent: each call first plays {path} ({secs:.2} s)");
             Some(clip)
         }
-        None => {
-            eprintln!("agent: TEST_WAV not set; each call only echoes");
-            None
-        }
+        None => None,
     };
+    let whisper_model = env("WHISPER_MODEL").unwrap_or_else(|| DEFAULT_WHISPER_MODEL.to_string());
+    let vad_model = env("VAD_MODEL").unwrap_or_else(|| DEFAULT_VAD_MODEL.to_string());
+    let whisper = Whisper::load(&whisper_model).map_err(|e| format!("{whisper_model}: {e}"))?;
+    // Fails now rather than on the first call if the VAD model is missing.
+    Silero::new(&vad_model).map_err(|e| format!("{vad_model}: {e}"))?;
+    let stt = Stt::start(whisper);
+    eprintln!("agent: transcribing with {whisper_model}");
     let listener = TcpListener::bind(&listen).await?;
     eprintln!("agent: listening for AudioSocket on {listen}");
 
     loop {
         let (stream, peer) = listener.accept().await?;
-        let clip = clip.clone();
+        let (clip, stt, vad_model) = (clip.clone(), stt.clone(), vad_model.clone());
         tokio::spawn(async move {
-            if let Err(e) = call(stream, clip).await {
+            if let Err(e) = call(stream, clip, stt, &vad_model).await {
                 eprintln!("agent: {peer}: call failed: {e}");
             }
         });
@@ -55,39 +64,27 @@ fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-async fn call(stream: TcpStream, clip: Option<Vec<i16>>) -> Result<(), Error> {
+async fn call(
+    stream: TcpStream,
+    clip: Option<Vec<i16>>,
+    stt: Stt,
+    vad_model: &str,
+) -> Result<(), Error> {
     // Asterisk sets TCP_NODELAY on its side (issue #4). Setting it here too sends each
     // 323-byte frame at once instead of letting the kernel hold it back to batch it.
     stream.set_nodelay(true)?;
-    let (uuid, mut media, line) = line::accept(stream).await?;
+    // Each call gets its own VAD: Silero carries state from one window to the next.
+    let vad = Silero::new(vad_model)?;
+    let (uuid, media, line) = line::accept(stream).await?;
     eprintln!("agent: call started, UUID {uuid}");
 
     let started = Instant::now();
-    let mut echoing = true;
     if let Some(clip) = clip {
         media.speaker.play(clip);
-        media.speaker.mark(END_OF_CLIP);
-        echoing = false;
     }
-
-    loop {
-        tokio::select! {
-            frame = media.frames.recv() => match frame {
-                // Echo only once the clip is over; before that, the echo would queue up
-                // behind the clip and come back late.
-                Some(frame) if echoing => media.speaker.play(frame.to_vec()),
-                Some(_) => {}
-                None => break,
-            },
-            Some(END_OF_CLIP) = media.played.recv() => {
-                eprintln!(
-                    "agent: test WAV written to the line {:.3} s after the call started; echoing",
-                    started.elapsed().as_secs_f64()
-                );
-                echoing = true;
-            }
-        }
-    }
+    // Keeps the speaker alive, so the line goes on sending silence, until the call ends.
+    let _speaker = media.speaker;
+    listen(uuid.to_string(), media.frames, vad, stt).await;
 
     let stats = line.await??;
     let gap = |g: Option<std::time::Duration>| g.map_or("n/a".into(), |g| format!("{g:.1?}"));

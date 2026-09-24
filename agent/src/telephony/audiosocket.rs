@@ -221,6 +221,15 @@ pub fn encode_hangup() -> [u8; 3] {
     [KIND_HANGUP, 0, 0]
 }
 
+/// The first message Asterisk sends. Only a client standing in for Asterisk, such as the
+/// eval's, sends it.
+pub fn encode_uuid(uuid: &Uuid) -> [u8; 19] {
+    let mut message = [0u8; 19];
+    message[..3].copy_from_slice(&[KIND_UUID, 0, 16]);
+    message[3..].copy_from_slice(&uuid.0);
+    message
+}
+
 fn audio_kind(rate_hz: u32) -> Option<u8> {
     AUDIO_KINDS.iter().find(|&&(_, r)| r == rate_hz).map(|&(k, _)| k)
 }
