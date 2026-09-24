@@ -1,7 +1,7 @@
 # One target per build step. `make` alone lists them.
 .DEFAULT_GOAL := help
 .PHONY: help asterisk-build asterisk-config asterisk-up asterisk-down asterisk-logs asterisk-cli \
-	sip-accounts models agent test-wav agent-test-wav test eval
+	sip-accounts models espeak-data agent test-wav agent-test-wav test eval
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-15s %s\n", $$1, $$2}'
@@ -29,15 +29,28 @@ asterisk-cli: ## Open the Asterisk console
 sip-accounts: ## Print what to type into the two softphones, passwords included
 	@asterisk/configure.sh accounts
 
-# Silero VAD and whisper tiny.en, into models/ (gitignored). URLs as fetched 2026-09-24.
-models: ## Download the VAD and speech-to-text models
+# Silero VAD, whisper tiny.en and the Piper voice, into models/ (gitignored). URLs as fetched
+# 2026-09-24; the voice's path follows piper-rs 0.2.0's examples/usage.rs.
+PIPER_VOICES := https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium
+models: ## Download the VAD, speech-to-text and voice models
 	mkdir -p models
 	cd models && test -f silero_vad.onnx || curl -fL -O https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx
 	cd models && test -f ggml-tiny.en.bin || curl -fL -O https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+	cd models && test -f en_US-lessac-medium.onnx || curl -fL -O $(PIPER_VOICES)/en_US-lessac-medium.onnx
+	cd models && test -f en_US-lessac-medium.onnx.json || curl -fL -O $(PIPER_VOICES)/en_US-lessac-medium.onnx.json
+
+# Piper turns text into phonemes with espeak-ng, whose dictionaries the espeak-rs-sys crate
+# compiles during the build. espeak-rs looks for them in PIPER_ESPEAKNG_DATA_DIRECTORY
+# (espeak-rs 0.2.0, src/lib.rs:53-75), so they are copied out of the build into models/.
+export PIPER_ESPEAKNG_DATA_DIRECTORY := models
+espeak-data:
+	cargo build --release -p agent
+	test -d models/espeak-ng-data || cp -r "$$(ls -d target/release/build/espeak-rs-sys-*/out/share/espeak-ng-data | head -1)" models/
 
 # --release: whisper built without optimisation is far too slow for a live call (inferred;
 # only release builds were timed).
-agent: ## Run the agent natively in Ubuntu
+# Ollama must be running: `ollama serve`, then `ollama pull` the model in .env once.
+agent: espeak-data ## Run the check-in agent natively in Ubuntu
 	cargo run --release -p agent
 
 # A synthetic 12 s clip at 22.05 kHz, Piper's usual rate, so it is resampled twice on the
@@ -53,7 +66,7 @@ test-wav: ## Write the synthetic test clip for a live call (needs ffmpeg)
 		if(lt(t,8), sin(2*PI*440*t), sin(2*PI*300/(log(7000/300)/4)*(exp(log(7000/300)/4*(t-8))-1))))':s=22050:d=12" \
 		-c:a pcm_s16le $(TEST_WAV)
 
-agent-test-wav: test-wav ## Run the agent: each call plays the test clip, then listens
+agent-test-wav: test-wav espeak-data ## Run the agent: each call plays the test clip, then listens
 	TEST_WAV=$(TEST_WAV) cargo run --release -p agent
 
 test: ## Run the Rust tests

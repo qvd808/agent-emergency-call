@@ -18,8 +18,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, MissedTickBehavior};
 
-use super::audiosocket::{Decoder, Message, Uuid, encode_audio};
-use super::{Cleared, Command, Frame, MarkId, Media, Speaker, core_duration};
+use super::audiosocket::{Decoder, Message, Uuid, encode_audio, encode_hangup};
+use super::{CallControl, Cleared, Command, Frame, MarkId, Media, Speaker, core_duration};
 use crate::audio::{
     CORE_FRAME, FRAME_MS, FrameResampler, LINE_FRAME, LINE_RATE_HZ, samples_from_le_bytes,
     samples_to_le_bytes,
@@ -57,10 +57,10 @@ pub struct LineStats {
 }
 
 /// Reads the UUID Asterisk sends first, then starts the call's line task. The task ends
-/// when Asterisk closes the socket, and returns what it counted.
+/// when either side hangs up, and returns what it counted.
 pub async fn accept<S>(
     mut stream: S,
-) -> Result<(Uuid, Media, JoinHandle<Result<LineStats, Error>>), Error>
+) -> Result<(Uuid, Media, CallControl, JoinHandle<Result<LineStats, Error>>), Error>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -85,9 +85,10 @@ where
     let (frames_tx, frames) = mpsc::channel(INBOUND_BUFFER);
     let (played_tx, played) = mpsc::unbounded_channel();
     let (commands_tx, commands) = mpsc::unbounded_channel();
-    let media = Media { frames, played, speaker: Speaker::new(commands_tx) };
+    let media = Media { frames, played, speaker: Speaker::new(commands_tx.clone()) };
+    let control = CallControl::new(commands_tx);
     let task = tokio::spawn(run(stream, decoder, frames_tx, played_tx, commands));
-    Ok((uuid, media, task))
+    Ok((uuid, media, control, task))
 }
 
 async fn run<S>(
@@ -179,6 +180,16 @@ where
                 Command::Play(audio) => outbox.play(audio),
                 Command::Mark(id) => outbox.mark(id),
                 Command::Clear(reply) => { let _ = reply.send(outbox.clear()); }
+                // Asterisk ends the AudioSocket() app, and the dialplan's next line hangs
+                // up (asterisk/config/extensions.conf, extension 3100).
+                Command::Hangup => {
+                    match stream.write_all(&encode_hangup()).await {
+                        Ok(()) => {}
+                        Err(e) if matches!(e.kind(), ErrorKind::BrokenPipe | ErrorKind::ConnectionReset) => {}
+                        Err(e) => return Err(e.into()),
+                    }
+                    return Ok(stats);
+                }
             },
         }
     }
@@ -445,7 +456,7 @@ mod tests {
     async fn started_line() -> (DuplexStream, Media, JoinHandle<Result<LineStats, Error>>) {
         let (mut asterisk, agent) = duplex(1 << 16);
         asterisk.write_all(&UUID_MESSAGE).await.unwrap();
-        let (uuid, media, task) = accept(agent).await.unwrap();
+        let (uuid, media, _control, task) = accept(agent).await.unwrap();
         assert_eq!(uuid.to_string(), "6f9c1d2e-3a4b-4c5d-8e6f-708192a3b4c5");
         (asterisk, media, task)
     }
@@ -542,5 +553,18 @@ mod tests {
         // Speaking to an ended call is harmless.
         media.speaker.play(vec![0; 10]);
         assert_eq!(media.speaker.clear().await, Cleared::default());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hangup_sends_the_hangup_message_and_ends_the_line() {
+        let (mut asterisk, agent) = duplex(1 << 16);
+        asterisk.write_all(&UUID_MESSAGE).await.unwrap();
+        let (_uuid, _media, control, task) = accept(agent).await.unwrap();
+        control.hangup();
+        assert!(task.await.unwrap().is_ok());
+        // Whatever silent frames went out first, the last message is the hangup.
+        let mut sent = Vec::new();
+        asterisk.read_to_end(&mut sent).await.unwrap();
+        assert_eq!(sent[sent.len() - 3..], encode_hangup());
     }
 }

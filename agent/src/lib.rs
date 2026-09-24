@@ -5,6 +5,9 @@
 //! path as a real call (issue #25).
 
 pub mod audio;
+pub mod conversation;
 pub mod listen;
+pub mod llm;
 pub mod stt;
 pub mod telephony;
+pub mod tts;

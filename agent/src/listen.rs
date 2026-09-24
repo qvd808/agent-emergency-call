@@ -61,6 +61,17 @@ impl Segmenter {
         self.t
     }
 
+    /// Seconds since the resident last stopped speaking, 0 while they speak. Meaningless
+    /// until they have spoken once.
+    pub fn quiet_for(&self) -> f64 {
+        self.gate.silence(self.t - WINDOW_S)
+    }
+
+    /// Forgets any utterance in progress and starts afresh, keeping the clock.
+    pub fn restart(&mut self) {
+        *self = Segmenter { t: self.t, ..Segmenter::default() };
+    }
+
     pub fn push(&mut self, window: &[i16], p: f32) -> Option<Utterance> {
         let t = self.t;
         self.t += WINDOW_S;

@@ -1,6 +1,7 @@
 //! The telephony seam (issue #13). The agent's core sees a call's audio only through [`Media`]
-//! and never sees AudioSocket, channel names or the line's format. Call control (placing,
-//! transferring and hanging up calls) lands here once the core needs it.
+//! and never sees AudioSocket, channel names or the line's format. Call control is
+//! [`CallControl`]: hanging up so far; placing and transferring calls land with outbound
+//! check-ins and escalation.
 //!
 //! Media is a plain handle of channels rather than a trait: an adapter builds one per call and
 //! runs its own task behind it. A Twilio adapter would build the same handle.
@@ -49,6 +50,25 @@ pub(crate) enum Command {
     Play(Vec<i16>),
     Mark(MarkId),
     Clear(oneshot::Sender<Cleared>),
+    Hangup,
+}
+
+/// Ends and redirects calls. Cheap to clone.
+#[derive(Clone)]
+pub struct CallControl {
+    commands: mpsc::UnboundedSender<Command>,
+}
+
+impl CallControl {
+    pub(crate) fn new(commands: mpsc::UnboundedSender<Command>) -> Self {
+        Self { commands }
+    }
+
+    /// Hangs up at once, dropping any audio not yet written to the line. To let the last
+    /// words finish, wait for a mark queued after them first.
+    pub fn hangup(&self) {
+        let _ = self.commands.send(Command::Hangup);
+    }
 }
 
 impl Speaker {

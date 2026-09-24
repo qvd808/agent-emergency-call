@@ -7,6 +7,9 @@ CONTEXT.md
 # Per-machine Claude Code overrides
 .claude/settings.local.json
 
+# Subagent git worktrees
+.claude/worktrees/
+
 # Rust build output
 /target/
 

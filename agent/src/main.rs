@@ -1,21 +1,26 @@
-//! For now, a harness for hearing the resident (issue #17). On each call it transcribes what
-//! the resident says and logs each utterance with how soon its text was ready. With
-//! `TEST_WAV` set, it first plays that WAV into the call at real-time pace, as issue #16 did.
-//! The audio goes through the same path the agent will use: 8 kHz on the line, 16 kHz inside.
+//! The check-in agent (issue #18). Each call to extension 3100 gets the spoken check-in in
+//! `conversation.rs`: speech to text, the LLM's turn, and Piper's voice back down the line.
+//!
+//! With `TEST_WAV` set it is instead the audio harness from issues #16 and #17: each call
+//! plays that WAV at real-time pace, then transcribes and logs what the resident says.
 //!
 //! Asterisk connects to us: the dialplan's `AudioSocket()` dials `host.docker.internal:9092`,
 //! which reaches this process on `127.0.0.1` (issue #27). Only loopback, so nothing on the
 //! Wi-Fi can reach the agent.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use agent::audio::{CORE_RATE_HZ, resample_clip};
+use agent::conversation::{Lines, Services, check_in};
 use agent::listen::listen;
+use agent::llm::{Llm, Message, Ollama, Role, SYSTEM_PROMPT};
 use agent::stt::{Stt, Whisper};
 use agent::telephony::{core_duration, line};
-use turn::vad::Silero;
+use agent::tts::{Tts, Voice};
 use tokio::net::{TcpListener, TcpStream};
+use turn::vad::Silero;
 
 /// Must match the port in `asterisk/config/extensions.conf`, extension 3100.
 const DEFAULT_LISTEN: &str = "127.0.0.1:9092";
@@ -24,6 +29,11 @@ const DEFAULT_LISTEN: &str = "127.0.0.1:9092";
 /// `small.en` on this laptop's CPU, and the only one inside the 1 s budget (issue #17).
 const DEFAULT_WHISPER_MODEL: &str = "models/ggml-tiny.en.bin";
 const DEFAULT_VAD_MODEL: &str = "models/silero_vad.onnx";
+const DEFAULT_VOICE: &str = "models/en_US-lessac-medium.onnx";
+
+/// The same defaults as `.env.example`.
+const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_MODEL: &str = "qwen3:4b-instruct-2507-q4_K_M";
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -34,7 +44,7 @@ async fn main() -> Result<(), Error> {
         Some(path) => {
             let clip = load_wav(Path::new(&path))?;
             let secs = core_duration(clip.len()).as_secs_f64();
-            eprintln!("agent: each call first plays {path} ({secs:.2} s)");
+            eprintln!("agent: each call first plays {path} ({secs:.2} s), then listens");
             Some(clip)
         }
         None => None,
@@ -46,18 +56,50 @@ async fn main() -> Result<(), Error> {
     Silero::new(&vad_model).map_err(|e| format!("{vad_model}: {e}"))?;
     let stt = Stt::start(whisper);
     eprintln!("agent: transcribing with {whisper_model}");
+
+    let services = match clip {
+        Some(_) => None,
+        None => Some(start_services(stt.clone()).await?),
+    };
+
     let listener = TcpListener::bind(&listen).await?;
     eprintln!("agent: listening for AudioSocket on {listen}");
-
     loop {
         let (stream, peer) = listener.accept().await?;
-        let (clip, stt, vad_model) = (clip.clone(), stt.clone(), vad_model.clone());
+        let (clip, stt, services, vad_model) =
+            (clip.clone(), stt.clone(), services.clone(), vad_model.clone());
         tokio::spawn(async move {
-            if let Err(e) = call(stream, clip, stt, &vad_model).await {
+            if let Err(e) = call(stream, clip, stt, services, &vad_model).await {
                 eprintln!("agent: {peer}: call failed: {e}");
             }
         });
     }
+}
+
+/// Loads the voice and the fixed lines, and checks the LLM answers, before any call.
+async fn start_services(stt: Stt) -> Result<Services<Ollama>, Error> {
+    let voice_model = env("PIPER_VOICE").unwrap_or_else(|| DEFAULT_VOICE.to_string());
+    let voice = Voice::load(&voice_model).map_err(|e| format!("{voice_model}: {e}"))?;
+    let tts = Tts::start(voice);
+    let started = Instant::now();
+    let lines = Lines::synthesise(&tts).await?;
+    eprintln!(
+        "agent: speaking with {voice_model} (fixed lines in {} ms)",
+        started.elapsed().as_millis()
+    );
+
+    let url = env("OLLAMA_URL").unwrap_or_else(|| DEFAULT_OLLAMA_URL.to_string());
+    let model = env("OLLAMA_MODEL").unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string());
+    let llm = Ollama::new(&url, &model);
+    // Also loads the model into memory, so the first call's first turn doesn't wait for it.
+    let probe = [
+        Message::new(Role::System, SYSTEM_PROMPT),
+        Message::new(Role::User, "I'm fine, thank you."),
+    ];
+    let reply = llm.turn(&probe).await.map_err(|e| format!("{model} at {url}: {e}"))?;
+    eprintln!("agent: thinking with {model} (warm-up turn in {} ms)", reply.took.as_millis());
+
+    Ok(Services { stt, tts, llm: Arc::new(llm), lines: Arc::new(lines) })
 }
 
 fn env(name: &str) -> Option<String> {
@@ -68,6 +110,7 @@ async fn call(
     stream: TcpStream,
     clip: Option<Vec<i16>>,
     stt: Stt,
+    services: Option<Services<Ollama>>,
     vad_model: &str,
 ) -> Result<(), Error> {
     // Asterisk sets TCP_NODELAY on its side (issue #4). Setting it here too sends each
@@ -75,16 +118,21 @@ async fn call(
     stream.set_nodelay(true)?;
     // Each call gets its own VAD: Silero carries state from one window to the next.
     let vad = Silero::new(vad_model)?;
-    let (uuid, media, line) = line::accept(stream).await?;
+    let (uuid, media, control, line) = line::accept(stream).await?;
     eprintln!("agent: call started, UUID {uuid}");
 
     let started = Instant::now();
-    if let Some(clip) = clip {
-        media.speaker.play(clip);
+    match (clip, services) {
+        (_, Some(services)) => check_in(uuid.to_string(), media, control, vad, services).await,
+        (clip, None) => {
+            if let Some(clip) = clip {
+                media.speaker.play(clip);
+            }
+            // Keeps the speaker alive, so the line goes on sending silence, until the call ends.
+            let _speaker = media.speaker;
+            listen(uuid.to_string(), media.frames, vad, stt).await;
+        }
     }
-    // Keeps the speaker alive, so the line goes on sending silence, until the call ends.
-    let _speaker = media.speaker;
-    listen(uuid.to_string(), media.frames, vad, stt).await;
 
     let stats = line.await??;
     let gap = |g: Option<std::time::Duration>| g.map_or("n/a".into(), |g| format!("{g:.1?}"));
