@@ -1,7 +1,7 @@
 # Are You OK? A voice AI that checks in on people who live alone
 
 **Pick up a phone, dial an extension, and an AI agent holds a short spoken check-in with you:
-how you feel, whether you've fallen, pain, whether you've eaten, whether you need anything.
+how you feel, whether you've eaten, whether you've fallen, pain, whether you need anything.
 Talk over it and it stops. Pause to think and it waits. Say "I fell and I can't get up" and,
 in under a second, it tells you it is connecting you to a person and hands the live call to a
 human dispatcher.**

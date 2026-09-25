@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(
             schema["properties"]["asking"]["enum"],
             serde_json::json!([
-                "feeling", "falls", "pain", "eaten", "needs", "follow_up", "offer_person", "goodbye"
+                "feeling", "eaten", "falls", "pain", "needs", "follow_up", "offer_person", "goodbye"
             ])
         );
         assert_eq!(

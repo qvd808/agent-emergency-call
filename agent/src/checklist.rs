@@ -16,18 +16,20 @@ use crate::escalation::normalise;
 /// first ask about feeling.
 pub const MAX_ASKS: u32 = 2;
 
-/// The items, in the order they are asked.
+/// The items, in the order they are asked. Eating follows "how are you feeling?" as routine,
+/// falls lead into pain, and pain into "do you need anything?": asked falls, pain, eaten,
+/// needs, a live call went from back pain to "How was your breakfast today?" (issue #54).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Item {
     Feeling,
+    Eaten,
     Falls,
     Pain,
-    Eaten,
     Needs,
 }
 
-pub const ITEMS: [Item; 5] = [Item::Feeling, Item::Falls, Item::Pain, Item::Eaten, Item::Needs];
+pub const ITEMS: [Item; 5] = [Item::Feeling, Item::Eaten, Item::Falls, Item::Pain, Item::Needs];
 
 impl Item {
     fn index(self) -> usize {
@@ -64,11 +66,11 @@ pub struct Marks {
     #[schemars(required, extend("type" = ["string", "null"]))]
     pub feeling: Option<String>,
     #[schemars(required, extend("type" = ["string", "null"]))]
+    pub eaten: Option<String>,
+    #[schemars(required, extend("type" = ["string", "null"]))]
     pub falls: Option<String>,
     #[schemars(required, extend("type" = ["string", "null"]))]
     pub pain: Option<String>,
-    #[schemars(required, extend("type" = ["string", "null"]))]
-    pub eaten: Option<String>,
     #[schemars(required, extend("type" = ["string", "null"]))]
     pub needs: Option<String>,
 }
@@ -107,9 +109,9 @@ fn is_placeholder(note: &str) -> bool {
 #[serde(rename_all = "snake_case")]
 pub enum Asking {
     Feeling,
+    Eaten,
     Falls,
     Pain,
-    Eaten,
     Needs,
     // One question about a problem they just mentioned. A `//` comment: a doc comment on a
     // variant would turn the schema's plain `enum` into a `oneOf`.
@@ -397,7 +399,7 @@ mod tests {
     fn the_first_answer_is_taken_as_the_greeting_s_answer() {
         let note = Checklist::default().note(false);
         assert!(note.contains("You last asked about feeling"), "{note}");
-        assert!(note.contains("Then ask about falls"), "{note}");
+        assert!(note.contains("Then ask about eaten"), "{note}");
     }
 
     #[test]
@@ -441,8 +443,8 @@ mod tests {
     #[test]
     fn an_answer_in_passing_closes_its_item_too() {
         let mut list = Checklist::default();
-        list.record(&marks(Some("fine"), Some("no falls")), Asking::Pain, "Fine, no falls.");
-        assert_eq!(list.next(), Some(Item::Pain));
+        list.record(&marks(Some("fine"), Some("no falls")), Asking::Eaten, "Fine, no falls.");
+        assert_eq!(list.next(), Some(Item::Eaten));
         assert!(list.note(false).contains("falls: whether they have had a fall - done (no falls)"));
     }
 
@@ -472,8 +474,8 @@ mod tests {
         assert_eq!(list.record(&Marks::default(), Asking::Feeling, "Eh?"), Recorded::default());
         assert!(list.note(false).contains("asked 2 times already"));
         // Still no answer: closed, and the list moves on.
-        assert_eq!(list.record(&Marks::default(), Asking::Falls, "Eh?").closed, [Item::Feeling]);
-        assert_eq!(list.next(), Some(Item::Falls));
+        assert_eq!(list.record(&Marks::default(), Asking::Eaten, "Eh?").closed, [Item::Feeling]);
+        assert_eq!(list.next(), Some(Item::Eaten));
         assert!(list.note(false).contains("closed, no clear answer"));
     }
 

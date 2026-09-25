@@ -1,5 +1,5 @@
 //! The scripted residents (issue #23, first version as scoped on the ticket). Each one answers
-//! the check-in in the order the agent asks it (feeling, falls, pain, eaten, needs), one line
+//! the check-in in the order the agent asks it (feeling, eaten, falls, pain, needs; issue #54), one line
 //! per agent turn, and says what the eval expects of the call.
 //!
 //! A line can hold pauses, written `[1.5]` for 1.5 s of silence. They are where the eval
@@ -58,18 +58,18 @@ pub fn all() -> Vec<Persona> {
         // The six from the brief.
         fine("doing_fine", vec![
             Say("I'm doing well, thank you."),
+            Say("Yes, I had porridge for breakfast."),
             Say("No, I haven't had any falls."),
             Say("No, no pain at all."),
-            Say("Yes, I had porridge for breakfast."),
             Say("No, I have everything I need, thank you."),
         ]),
         Persona {
             name: "mild_concern",
             steps: vec![
                 Say("I'm alright, just a bit sore."),
+                Say("Yes, I had some soup for lunch."),
                 Say("Well, I fell yesterday in the kitchen, but I got up by myself."),
                 Say("My hip is sore. It's bearable, though."),
-                Say("Yes, I had some soup for lunch."),
                 Say("No, that's everything."),
             ],
             expect: Expect::NoEscalation { flag: true },
@@ -82,26 +82,26 @@ pub fn all() -> Vec<Persona> {
             Say("Sorry, what did you say? I didn't hear you."),
             Say("Oh, I'm fine, thank you."),
             Say("Pardon? Could you say that again, dear?"),
+            Say("Yes, I've eaten."),
             Say("No, no falls."),
             Say("No pain."),
-            Say("Yes, I've eaten."),
             Say("No, nothing, thank you."),
         ]),
         fine("long_pauser", vec![
             Say("Well, [1.0] I'm alright today."),
+            Say("Yes, I had, um, [2.0] a sandwich. [0.5] With cheese."),
             Say("No, [2.0] I don't think so. [1.5] No falls."),
             Say("No, [2.5] no pain at the moment."),
-            Say("Yes, I had, um, [2.0] a sandwich. [0.5] With cheese."),
             Say("No, [1.5] I'm fine for everything."),
         ]),
         fine("chatty", vec![
             Say("Oh, I'm fine, dear. My grandson came round on Sunday and we watched the \
                  football. His team lost again, poor thing."),
+            Say("Yes, I had a nice bit of fish last night, and toast this morning."),
             Say("No falls. I've been walking to the shops every morning. The roses are out \
                  along the road, they're lovely this year."),
             Say("No pain. Did you hear they're building a new bridge in town? They say it'll \
                  take three years."),
-            Say("Yes, I had a nice bit of fish last night, and toast this morning."),
             Say("No, I've got all I need, thank you."),
         ]),
         // One per escalation trigger.
@@ -122,16 +122,16 @@ pub fn all() -> Vec<Persona> {
         fine("near_miss_falls", vec![
             Say("I'm fine. I had a fall last Tuesday, but I got straight back up, just a bruise."),
             Say("My neighbour had a fall, the ambulance came yesterday. But I'm alright."),
-            Say("No pain now."),
             Say("Yes, I've eaten."),
+            Say("No pain now."),
             Say("No, thank you."),
         ]),
         fine("near_miss_idioms", vec![
             Say("Oh, this heat is killing me, but otherwise I'm fine."),
+            Say("Yes, I had breakfast."),
             Say("No falls. Can you help me remember what day it is?"),
             Say("Are you a real person?"),
             Say("No pain. I could murder a cup of tea, though."),
-            Say("Yes, I had breakfast."),
             Say("No, nothing, thanks."),
         ]),
         // Escalate by design: the keyword rule ignores negation and context (issue #11).
@@ -151,18 +151,18 @@ pub fn all() -> Vec<Persona> {
         fine("barge_in", vec![
             Say("I'm fine, thank you."),
             Interrupt(0.5, "Sorry, wait, can you say that again?"),
+            Say("Yes, I've eaten."),
             Say("No, no falls."),
             Say("No pain."),
-            Say("Yes, I've eaten."),
             Say("No, thank you."),
         ]),
         // Only says "yeah" over it: the agent should pause, then play on (issue #19).
         fine("backchannel", vec![
             Say("I'm fine, thank you."),
             Interrupt(0.5, "Yeah."),
+            Say("Yes, I've eaten."),
             Say("No, no falls."),
             Say("No pain."),
-            Say("Yes, I've eaten."),
             Say("No, thank you."),
         ]),
     ]

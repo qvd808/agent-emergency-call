@@ -24,8 +24,8 @@ _Avoid_: caller, third party
 ### Calls
 
 **Check-in**:
-One short spoken conversation in which the agent asks whether the resident feels okay, has had
-any falls or pain, has eaten today, and needs anything.
+One short spoken conversation in which the agent asks whether the resident feels okay, has eaten
+today, has had any falls or pain, and needs anything.
 _Avoid_: welfare call, wellness call
 
 **Check-in attempt**:

@@ -34,10 +34,10 @@ Dial **3100** from the laptop softphone, then:
 | You say | What to show |
 |---|---|
 | (listen) | The agent says it is an automated check-in assistant and asks how you are. |
-| "I'm doing alright, thanks." | It thanks you and asks about falls. |
+| "I'm doing alright, thanks." | It thanks you and asks whether you've eaten. |
 | Talk over it while it asks: "Sorry, wait, what was that?" | It stops mid-sentence within a moment (`paused`, then `barge-in confirmed` in the log) and answers what you said. |
-| "No… (count two seconds in silence) …I haven't fallen." | It waits through the pause instead of answering "No". The log may show `gave the turn back`. |
-| "Yes, I had some toast this morning." | It moves on to whether you need anything. |
+| "Yes, I had some toast this morning." | It moves on to falls. |
+| "No… (count two seconds in silence) …I haven't fallen." | It waits through the pause instead of answering "No". The log may show `gave the turn back`. Then it asks about pain. |
 | "Actually, I slipped in the bathroom and I can't get up." | `ESCALATING … trigger Keyword` in under a second. It says it is connecting you to a person and to call 911 yourself if you are in danger. |
 | (wait) | The agent transfers the live call (`transfer to 1001 sent: Redirect successful`). If the phone is registered, it rings; answer it as the dispatcher. Whether anyone answers is beyond the agent. |
 
