@@ -1,0 +1,25 @@
+== hfc_female's four lines: ms per kind of sound under each timing (* = picked by ear)
+line         timing     lead-in  speech  word end  vowels  punct.  sounds/s
+sympathetic  own            128    2159       476     639     325      12.5
+sympathetic  prudence*       93    2426       673     708     348      11.1
+sympathetic  poppy          929    2485       604     813     418      10.9
+glad         own             93    2357       348     789     221      12.7
+glad         prudence        23    2392       476     708     163      12.5
+glad         poppy*         522    2276       372     697     325      13.2
+reassuring   own            139    2624       499     708     290      16.4
+reassuring   prudence       290    2984       615     836     383      14.4
+reassuring   poppy*         476    2926       604     743     430      14.7
+serious      own*            81    2485       464     789     290      16.1
+serious      prudence        70    2856       615     848     534      14.0
+serious      poppy          453    3007       546     871     348      13.3
+
+== thorsten_emotional, 8 German sentences: change against neutral, per kind of sound
+emotion    speech ms  speech       lead-in        vowels    consonants      word end spaces/stress   pause marks
+amused         18135     -1%           +4%           +3%           +0%          -10%           -1%           -1%
+angry          21560    +17%           +9%          +36%          +10%           +5%          +13%           +7%
+disgusted      23301    +27%           +9%          +27%          +30%           +7%          +36%           +9%
+drunk          23719    +29%         +204%          +27%          +33%          +45%          +17%          +30%
+neutral        18379     +0%           +0%           +0%           +0%           +0%           +0%           +0%
+sleepy         30674    +67%           +9%          +85%          +63%          +65%          +55%          +65%
+surprised      18773     +2%          +22%           -5%          +13%           +5%           -3%           +8%
+whisper        20654    +12%         +974%          +14%          +26%           +9%           +0%         +151%

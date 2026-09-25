@@ -137,14 +137,18 @@ Each claim is marked by where it comes from:
 ## The samples
 
 `confident-endings/samples/`, 8 kHz, with sentences joined by the agent's 0.2 s pause
-(`agent/src/tts.rs:64`). None have been heard yet.
+(`agent/src/tts.rs:64`).
 
 - `hfc_female-<tone>-<own|prudence|poppy>-timing.wav`: four check-in lines. Each is spoken by
   hfc_female three times, with its own timing, then Prudence's, then Poppy's. All three use the
   duration predictor's mean, so they differ only in timing.
+
+  The maintainer picked one per line (**heard**, 2026-09-25): sympathetic with Prudence's
+  timing, glad and reassuring with Poppy's, serious with hfc_female's own. That is followed up
+  in [timing-and-tone.md](timing-and-tone.md).
 - `semaine-glad-obadiah-to-poppy-<000…100>.wav` and
   `semaine-sympathetic-prudence-to-poppy-<000…100>.wav`: five blends each, from 0% to 100% of
-  the second speaker.
+  the second speaker. Not heard yet.
 
 ## Sources
 
