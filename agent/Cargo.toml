@@ -17,6 +17,11 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "i
 turn = { path = "../turn" }
 whisper-rs = "0.16.0"
 
+[features]
+# whisper.cpp on an NVIDIA GPU; building it needs the CUDA toolkit (issue #52). The Makefile
+# turns it on when it finds nvcc.
+cuda = ["whisper-rs/cuda"]
+
 [dev-dependencies]
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["test-util", "rt", "macros", "time", "io-util"] }

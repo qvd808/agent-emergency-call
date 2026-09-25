@@ -3,6 +3,16 @@
 .PHONY: help asterisk-build asterisk-config asterisk-up asterisk-down asterisk-logs asterisk-cli \
 	sip-accounts models espeak-data agent test-wav agent-test-wav test eval
 
+# whisper.cpp on an NVIDIA GPU (issue #52): with the CUDA toolkit installed, the agent and the
+# eval build with the `cuda` feature and hear with large-v3-turbo. Without it they build for the
+# CPU and hear with tiny.en, as before. /usr/local/cuda is where whisper-rs-sys 0.15.0's
+# build.rs looks for CUDA's libraries on Linux.
+CUDACXX ?= $(wildcard /usr/local/cuda/bin/nvcc)
+ifneq ($(CUDACXX),)
+export CUDACXX
+CUDA_FEATURE := --features cuda
+endif
+
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-15s %s\n", $$1, $$2}'
 
@@ -29,7 +39,8 @@ asterisk-cli: ## Open the Asterisk console
 sip-accounts: ## Print what to type into the two softphones, passwords included
 	@asterisk/configure.sh accounts
 
-# Silero VAD, whisper tiny.en, Smart Turn v3.2 and the Piper voices, into models/ (gitignored).
+# Silero VAD, whisper tiny.en (and large-v3-turbo for the GPU build), Smart Turn v3.2 and the
+# Piper voices, into models/ (gitignored).
 # URLs as fetched 2026-09-24; Smart Turn's is the one the turn-detection prototype used (branch
 # prototype/turn-detection, turn/prototype/PROTOTYPE_README.md); the voices' paths follow
 # piper-rs 0.2.0's examples/usage.rs. hfc_female is the agent's voice, picked by ear; lessac,
@@ -39,6 +50,7 @@ models: ## Download the VAD, speech-to-text, end-of-turn and voice models
 	mkdir -p models
 	cd models && test -f silero_vad.onnx || curl -fL -O https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx
 	cd models && test -f ggml-tiny.en.bin || curl -fL -O https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+	$(if $(CUDA_FEATURE),cd models && test -f ggml-large-v3-turbo-q5_0.bin || curl -fL -O https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin)
 	cd models && test -f smart-turn-v3.2-cpu.onnx || curl -fL -O https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx
 	cd models && for v in hfc_female/medium/en_US-hfc_female-medium lessac/medium/en_US-lessac-medium; do \
 		f=$$(basename $$v); \
@@ -51,14 +63,14 @@ models: ## Download the VAD, speech-to-text, end-of-turn and voice models
 # (espeak-rs 0.2.0, src/lib.rs:53-75), so they are copied out of the build into models/.
 export PIPER_ESPEAKNG_DATA_DIRECTORY := models
 espeak-data:
-	cargo build --release -p agent
+	cargo build --release -p agent $(CUDA_FEATURE)
 	test -d models/espeak-ng-data || cp -r "$$(ls -d target/release/build/espeak-rs-sys-*/out/share/espeak-ng-data | head -1)" models/
 
 # --release: whisper built without optimisation is far too slow for a live call (inferred;
 # only release builds were timed).
 # Ollama must be running: `ollama serve`, then `ollama pull` the model in .env once.
 agent: espeak-data ## Run the check-in agent natively in Ubuntu
-	cargo run --release -p agent
+	cargo run --release -p agent $(CUDA_FEATURE)
 
 # A synthetic 12 s clip at 22.05 kHz, Piper's usual rate, so it is resampled twice on the
 # way out, as the agent's speech will be. 0-5 s: a short 440 Hz beep on every second, to
@@ -74,7 +86,7 @@ test-wav: ## Write the synthetic test clip for a live call (needs ffmpeg)
 		-c:a pcm_s16le $(TEST_WAV)
 
 agent-test-wav: test-wav espeak-data ## Run the agent: each call plays the test clip, then listens
-	TEST_WAV=$(TEST_WAV) cargo run --release -p agent
+	TEST_WAV=$(TEST_WAV) cargo run --release -p agent $(CUDA_FEATURE)
 
 test: ## Run the Rust tests
 	cargo test --workspace
@@ -85,5 +97,5 @@ test: ## Run the Rust tests
 # those. Ollama must be running, as for `make agent`. Exits non-zero if a gate fails.
 eval: espeak-data ## Call the agent with scripted residents and print the results table
 	mkdir -p calls/eval
-	cargo build --release -p eval
+	cargo build --release -p eval $(CUDA_FEATURE)
 	REPEAT=$(REPEAT) PERSONA=$(PERSONA) target/release/eval 2> calls/eval/agent.log

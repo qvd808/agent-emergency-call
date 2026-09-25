@@ -8,3 +8,7 @@ agent = { path = "../agent" }
 dotenvy = "0.15"
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
+
+[features]
+# The agent's GPU build, so the eval hears as a live call does (issue #52).
+cuda = ["agent/cuda"]

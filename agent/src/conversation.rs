@@ -1248,12 +1248,12 @@ async fn finish_whole<L: Llm>(
     Ok((reply, Some(speech), false))
 }
 
-/// A tag such as `[BLANK_AUDIO]` or `(wind blowing)`, which whisper writes for a clip
-/// without words (inferred; not yet seen in this project's calls), isn't something the
-/// resident said.
+/// A tag such as `[BLANK_AUDIO]` or `(wind blowing)`, which tiny.en writes for a clip
+/// without words, isn't something the resident said. Nor is bare punctuation: large-v3-turbo
+/// writes "." for the same clips (live-call clips of 2026-09-25, issue #52).
 fn is_noise(text: &str) -> bool {
     let text = text.trim();
-    text.is_empty()
+    !text.chars().any(char::is_alphanumeric)
         || (text.starts_with('[') && text.ends_with(']'))
         || (text.starts_with('(') && text.ends_with(')'))
 }
@@ -1267,7 +1267,10 @@ mod tests {
         assert!(is_noise(""));
         assert!(is_noise(" [BLANK_AUDIO]"));
         assert!(is_noise("(wind blowing)"));
+        assert!(is_noise(" ."));
+        assert!(is_noise("..."));
         assert!(!is_noise("I'm fine, thank you."));
+        assert!(!is_noise("No."));
     }
 
     #[test]

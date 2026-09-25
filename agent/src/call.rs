@@ -26,7 +26,12 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 /// Where `make models` puts them. `tiny.en` is the fastest of `tiny.en`, `base.en` and
 /// `small.en` on this laptop's CPU, and the only one inside the 1 s budget (issue #17).
+/// All three misheard "fall" on a live call; large-v3-turbo heard it, but takes 14-17 s a clip
+/// on the CPU, so only the GPU build uses it (issue #52).
+#[cfg(not(feature = "cuda"))]
 pub const DEFAULT_WHISPER_MODEL: &str = "models/ggml-tiny.en.bin";
+#[cfg(feature = "cuda")]
+pub const DEFAULT_WHISPER_MODEL: &str = "models/ggml-large-v3-turbo-q5_0.bin";
 pub const DEFAULT_VAD_MODEL: &str = "models/silero_vad.onnx";
 pub const DEFAULT_VOICE: &str = "models/en_US-hfc_female-medium.onnx";
 pub const DEFAULT_SMART_TURN_MODEL: &str = "models/smart-turn-v3.2-cpu.onnx";

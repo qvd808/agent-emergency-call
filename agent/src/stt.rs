@@ -1,4 +1,5 @@
-//! Speech to text: whisper.cpp through whisper-rs, on the CPU (issue #17).
+//! Speech to text: whisper.cpp through whisper-rs, on the CPU (issue #17), or on an NVIDIA GPU
+//! with the `cuda` feature (issue #52).
 //!
 //! One worker thread transcribes for every call, one utterance at a time. Whisper blocks for
 //! hundreds of milliseconds, so it can't run on the task reading a call's frames: the line
@@ -15,6 +16,13 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 /// Fastest of 4, 8, 12 and 16 threads for `tiny.en` on this laptop (issue #17).
 pub const THREADS: i32 = 8;
+
+/// What the call is about, given to whisper as its initial prompt. A word heard between two
+/// readings then leans to the call's topics: on a live call's clips, "I haven't had a fault
+/// lately" became "a fall" with it, for tiny.en and large-v3-turbo alike (issue #52).
+const TOPICS: &str = "An automated check-in call with an older person who lives alone. It asks \
+    how they feel, whether they have had a fall, any pain, whether they have eaten today, and \
+    whether they need anything.";
 
 pub struct Whisper {
     context: WhisperContext,
@@ -46,6 +54,7 @@ impl Whisper {
         params.set_print_realtime(false);
         params.set_print_special(false);
         params.set_print_timestamps(false);
+        params.set_initial_prompt(TOPICS);
         let mut state = self.context.create_state()?;
         state.full(params, &clip)?;
         let mut text = String::new();

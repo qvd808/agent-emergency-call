@@ -161,12 +161,14 @@ caller stopped (once 4.8 s, when Smart Turn held a finished answer).
 ## Quick start
 
 You need Linux (developed on Ubuntu under WSL 2), Docker, Rust, `ffmpeg`, and
-[Ollama](https://ollama.com).
+[Ollama](https://ollama.com). An NVIDIA GPU is optional: with the CUDA toolkit installed
+(`/usr/local/cuda/bin/nvcc`), `make` builds whisper.cpp for the GPU and the agent hears with
+`large-v3-turbo` instead of `tiny.en`.
 
 ```sh
 ollama pull qwen3:4b-instruct-2507-q4_K_M
 cp .env.example .env
-make models          # Silero VAD, whisper tiny.en, Smart Turn v3.2, Piper voices → models/
+make models          # Silero VAD, whisper tiny.en (+ large-v3-turbo with CUDA), Smart Turn, Piper → models/
 make asterisk-build  # Asterisk 22.11.0 from source, in Docker
 make eval            # optional: no phone needed; about 17 minutes
 ```
@@ -224,8 +226,11 @@ write-ups are in `docs/research/`.
 - **Synthetic callers.** The eval's residents are Piper voices; how the turn-taking holds up for
   real older speakers is the first thing to measure next. Smart Turn, in particular, held four
   finished turns in the eval, which is what raises the p95.
-- **Speech to text.** whisper.cpp `tiny.en` is the only model fast enough on a laptop CPU, and it
-  mishears very short answers.
+- **Speech to text.** On a laptop CPU only whisper.cpp `tiny.en` is fast enough, and it mishears:
+  on live calls it heard one speaker's "fall" as "fault" and "thought". On an NVIDIA GPU the
+  agent uses `large-v3-turbo` with a one-line prompt naming the call's topics, which heard those
+  words right at a median 353 ms a clip
+  ([issue #52](https://github.com/qvd808/agent-emergency-call/issues/52)).
 - **Latency.** The 1.5 s end-of-turn wait and the local 4B model's 1.8 s to write a reply make
   up most of the 3.6 s; a faster model and a shorter wait on confident turn ends are the
   levers.
