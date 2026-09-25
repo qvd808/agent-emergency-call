@@ -1,0 +1,7 @@
+class          hfc_female   prudence      poppy   (ms, all sentences of the four lines)
+lead-in               441        476       2380
+vowels               2926       3100       3123
+consonants           2009       2310       2380
+word end             1788       2380       2125
+spaces/stress        2902       2868       3065
+pause marks          1126       1428       1521

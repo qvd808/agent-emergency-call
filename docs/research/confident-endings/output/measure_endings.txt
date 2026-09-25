@@ -1,0 +1,24 @@
+
+== 48 DFKI sentences: median over sentences (each Piper sentence the mean of its draws)
+source                     speech_s       pauses     pause_ms           f0       spread pre_pause_st       end_st    end_slope     decay_ms      tilt_db
+poppy (recording)              2.58         5.00       640.00       250.31        13.09         0.54        -5.74        -5.00       180.00        -6.60   (decay measured in 48 of 48)
+prudence (recording)           2.91         3.00       352.00       215.37        17.42         0.35        -8.06       -35.90       230.00       -10.32   (decay measured in 48 of 48)
+hfc_female                     2.81         2.50       262.00       208.26        10.24         0.11        -6.74       -26.18       143.75       -11.50   (decay measured in 48 of 48)
+prudence (Piper)               2.93         3.00       392.00       212.35        15.02        -0.39        -7.77       -36.68       203.75       -10.86   (decay measured in 48 of 48)
+poppy (Piper)                  2.59         5.00       618.00       254.54        12.26        -0.40        -6.05       -15.59       153.75        -6.34   (decay measured in 48 of 48)
+
+Same sentence, voice against hfc_female: share of sentences where the voice is higher
+source                     speech_s       pauses     pause_ms           f0       spread pre_pause_st       end_st    end_slope     decay_ms      tilt_db
+prudence (Piper)                52%          62%          85%          52%         100%          43%          40%          40%          62%          62%   (48 sentences)
+poppy (Piper)                   19%          90%          98%         100%          83%          43%          65%          67%          54%          96%   (48 sentences)
+
+== check-in sentences (Piper only): median over sentences (each Piper sentence the mean of its draws)
+source                     speech_s       pauses     pause_ms           f0       spread pre_pause_st       end_st    end_slope     decay_ms      tilt_db
+hfc_female                     1.41         0.62        72.00       209.87        10.32        -1.67        -4.68       -13.84        98.12       -11.00   (decay measured in 11 of 11)
+prudence (Piper)               1.46         0.88        86.00       271.24        14.92        -1.95        -6.82       -47.79       162.50        -9.14   (decay measured in 11 of 11)
+poppy (Piper)                  1.35         1.12        93.00       285.53        10.65        -1.17        -5.89       -27.84       166.88        -2.55   (decay measured in 11 of 11)
+
+Same sentence, voice against hfc_female: share of sentences where the voice is higher
+source                     speech_s       pauses     pause_ms           f0       spread pre_pause_st       end_st    end_slope     decay_ms      tilt_db
+prudence (Piper)                82%          36%          36%          82%          91%          62%          27%          36%          82%          64%   (11 sentences)
+poppy (Piper)                   55%          82%          91%         100%          64%          62%          45%          45%          82%         100%   (11 sentences)

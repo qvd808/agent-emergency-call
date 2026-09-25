@@ -1,0 +1,10 @@
+phonemes: ˈoʊ nˈoʊ, aɪm sˈɑːɹi tə hˈɪɹ ðˈæt.
+"Oh" vowel 0.139-0.232 s, "no" vowel 0.418-0.871 s (453 ms, 26 frames held)
+
+file                    Oh: median/max/end Hz  no: median/max/end Hz  Oh no vs rest
+0-as-piper                        216/255/198            171/178/170        +2.7 dB   Piper's own pitch with the hold: a peak on Oh, then a low flat no
+1-surprised                       258/264/262            263/308/206        +2.8 dB   high peak inside the no, like sample 08
+2-sorry-glide                     213/217/212            210/237/184        -0.6 dB   Oh lower, no glides down 238 to 182 Hz, never flat, softer
+3-sorry-rise-fall                 202/205/201            216/237/191        -0.5 dB   Oh lower, a small rise then fall inside the no (peak 238 Hz), softer
+4-sorry-fall-lift                 213/217/212            200/231/202        -0.6 dB   Oh lower, no falls to 182 Hz then lifts to 205 into I'm sorry, softer
+5-joking                          280/284/283            285/337/278        +4.9 dB   high sing-song no, louder: for contrast only

@@ -1,0 +1,8 @@
+sentence                                          hfc ms durations ms hfc+frames ms
+ˈoʊ nˈoʊ, aɪm sˈɑːɹi tə hˈɪɹ ðˈæt.                  84.5         16.6          86.9
+ɑːɹ juː hˈɜːt?                                      39.2          9.9          49.0
+ðæts wˈʌndɚfəl nˈuːz, aɪm sˌoʊ hˈæpi fɔːɹ juː!     120.7         19.1         115.4
+dˈoʊnt wˈʌɹi, jʊɹ nˌɑːt ɐlˈoʊn.                     70.2         16.0          80.8
+sˈʌmwʌn wɪl tʃˈɛk ˌɔn juː tənˈaɪt.                  72.7         16.8          88.6
+plˈiːz stˈeɪ wˈɛɹ juː ɑːɹ.                          54.8         13.6          66.2
+aɪm ɡˌɛɾɪŋ ɐ pˈɜːsən ɔnðə lˈaɪn nˈaʊ.               87.4         16.7          85.1
