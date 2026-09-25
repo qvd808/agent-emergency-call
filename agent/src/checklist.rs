@@ -16,6 +16,10 @@ use crate::escalation::normalise;
 /// first ask about feeling.
 pub const MAX_ASKS: u32 = 2;
 
+/// Times an item is asked again, without counting as an ask, because the resident asked to hear
+/// it again. Past that a request counts as an ask, so "what?" can't hold the call in a loop.
+pub const MAX_REPEATS: u32 = 2;
+
 /// The items, in the order they are asked. Eating follows "how are you feeling?" as routine,
 /// falls lead into pain, and pain into "do you need anything?": asked falls, pain, eaten,
 /// needs, a live call went from back pain to "How was your breakfast today?" (issue #54).
@@ -150,6 +154,8 @@ pub enum Entry {
 pub struct Checklist {
     entries: [Entry; 5],
     asks: [u32; 5],
+    /// Asks that repeated the question because the resident asked to hear it (issue #55).
+    repeats: [u32; 5],
     /// What the last reply asked about.
     last: Option<Asking>,
 }
@@ -164,11 +170,17 @@ impl Serialize for Checklist {
             #[serde(flatten)]
             entry: &'a Entry,
             asks: u32,
+            #[serde(skip_serializing_if = "is_zero")]
+            repeats: u32,
+        }
+        fn is_zero(n: &u32) -> bool {
+            *n == 0
         }
         let mut map = serializer.serialize_map(Some(ITEMS.len()))?;
         for item in ITEMS {
             let i = item.index();
-            map.serialize_entry(item.name(), &Logged { entry: &self.entries[i], asks: self.asks[i] })?;
+            let (asks, repeats) = (self.asks[i], self.repeats[i]);
+            map.serialize_entry(item.name(), &Logged { entry: &self.entries[i], asks, repeats })?;
         }
         map.end()
     }
@@ -180,7 +192,7 @@ impl Default for Checklist {
         // The fixed greeting asks how they are feeling.
         asks[Item::Feeling.index()] = 1;
         let entries = std::array::from_fn(|_| Entry::Open);
-        Checklist { entries, asks, last: Some(Asking::Feeling) }
+        Checklist { entries, asks, repeats: [0; 5], last: Some(Asking::Feeling) }
     }
 }
 
@@ -232,6 +244,30 @@ impl Checklist {
         }
         self.last = Some(asking);
         recorded
+    }
+
+    /// Takes in a turn the model judged a request to hear the last question again
+    /// (`their_turn` is `repeat`). It answers nothing, so none of the turn's marks is taken: the
+    /// model writes them before it labels the turn, and wrote "Pardon. Could you say that again,
+    /// dear?" as the eaten answer (replay of 2026-09-25, issue #55).
+    ///
+    /// The reply is taken as asking the last question again, whatever `asking` names: in a
+    /// replay the model repeated the question in its reply every time, but named the list's next
+    /// item in `asking` on three repeat turns of three, which put the list one question ahead
+    /// of the call. A goodbye stays a goodbye. Asking again doesn't count as another
+    /// try, up to [`MAX_REPEATS`] times; past that it counts as an ask with nothing answered.
+    pub fn record_repeat(&mut self, asking: Asking, heard: &str) -> Recorded {
+        let Some(last) = self.last.filter(|_| asking != Asking::Goodbye) else {
+            return self.record(&Marks::default(), asking, heard);
+        };
+        if let Some(item) = last.item()
+            && self.entries[item.index()] == Entry::Open
+            && self.repeats[item.index()] < MAX_REPEATS
+        {
+            self.repeats[item.index()] += 1;
+            return Recorded::default();
+        }
+        self.record(&Marks::default(), last, heard)
     }
 
     /// The first open item, if any.
@@ -564,5 +600,53 @@ mod tests {
         assert_eq!(list.record(&all, Asking::Goodbye, heard), Recorded::default());
         assert!(list.done());
         assert!(list.note(false).contains("Nothing is left to ask"));
+    }
+
+    #[test]
+    fn a_request_to_repeat_answers_nothing_and_is_not_another_try() {
+        let mut list = Checklist::default();
+        list.record(&marks(Some("fine"), None), Asking::Eaten, "I'm fine.");
+        assert_eq!(list.record_repeat(Asking::Eaten, "Pardon?"), Recorded::default());
+        assert_eq!(list.next(), Some(Item::Eaten));
+        let note = list.note(false);
+        assert!(note.contains("eaten: whether they have eaten today - open, asked 1 time"), "{note}");
+        assert!(note.contains("You last asked about eaten"), "{note}");
+        let porridge = Marks { eaten: Some("porridge".into()), ..Marks::default() };
+        list.record(&porridge, Asking::Falls, "Yes, porridge.");
+        assert!(list.note(false).contains("eaten: whether they have eaten today - done (porridge)"));
+        let json = serde_json::to_value(&list).unwrap();
+        assert_eq!(json["eaten"]["repeats"], 1);
+        assert_eq!(json["falls"].get("repeats"), None);
+    }
+
+    #[test]
+    fn a_resident_who_keeps_asking_to_repeat_cannot_loop_the_call() {
+        let mut list = Checklist::default();
+        list.record(&marks(Some("fine"), None), Asking::Eaten, "I'm fine.");
+        for _ in 0..MAX_REPEATS {
+            list.record_repeat(Asking::Eaten, "What?");
+        }
+        // Repeats used up: asking again counts, and the item closes like any unanswered one.
+        list.record_repeat(Asking::Eaten, "What?");
+        assert_eq!(list.record_repeat(Asking::Falls, "What?").closed, [Item::Eaten]);
+        assert_eq!(list.next(), Some(Item::Falls));
+    }
+
+    #[test]
+    fn a_repeat_asks_the_last_question_again_whatever_asking_names() {
+        let mut list = Checklist::default();
+        list.record(&marks(Some("fine"), None), Asking::Eaten, "I'm fine.");
+        list.record_repeat(Asking::Falls, "Sorry?");
+        let note = list.note(false);
+        assert!(note.contains("eaten: whether they have eaten today - open, asked 1 time"), "{note}");
+        assert!(note.contains("falls: whether they have had a fall - open\n"), "{note}");
+        assert!(note.contains("You last asked about eaten"), "{note}");
+        // The greeting's question too.
+        let mut list = Checklist::default();
+        list.record_repeat(Asking::Eaten, "Sorry, what did you say?");
+        assert!(list.note(false).contains("You last asked about feeling"));
+        // A goodbye stays a goodbye.
+        list.record_repeat(Asking::Goodbye, "What? I have to go.");
+        assert_eq!(list.last(), Some(Asking::Goodbye));
     }
 }

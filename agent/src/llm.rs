@@ -22,8 +22,8 @@ pub const SYSTEM_PROMPT: &str = include_str!("../prompts/checkin.txt");
 // The fields are in the order the model writes them. Ollama 0.20.7 generates an object's
 // properties in the schema's `properties` order, not `required`'s (measured 2026-09-24:
 // with the two orders reversed, the output followed `properties`). So the model first marks
-// what the resident's words answered and judges the status, then says what it will ask,
-// writes the reply, and only then decides whether that reply was the goodbye. Before,
+// what the resident's words answered and judges the status, then says what their turn does
+// and what it will ask, writes the reply, and only then decides whether that reply was the goodbye. Before,
 // `serde_json` sorted the properties alphabetically, so `end_call` came first, decided before
 // any reply was written (issue #35).
 //
@@ -31,6 +31,16 @@ pub const SYSTEM_PROMPT: &str = include_str!("../prompts/checkin.txt");
 // speaking once `end_call` is written ([`Head`]), while the model is still summing up. About
 // three quarters of a turn's tokens came before the reply when the summary was second
 // (measured on 2026-09-24, 128 tokens at 84 tokens/s).
+//
+// `their_turn` comes just before `asking`, so the model settles whether the resident answered
+// or asked to hear the question again before it picks the next question. Without it, it wrote
+// "Pardon. Could you say that again, dear?" as the eaten answer and moved on, though its summary
+// said they asked for a repeat: 0 of 20 repeat requests handled (replays of 2026-09-25, issue
+// #55). First in the object, it handled 20 of 20, but "I'm fine. Thank you." then came back
+// `concern` 7 times in 8 ("nothing else answered yet"), against 0 in 8 without it. Here, after
+// the status, it handled 16 of 20 (it answers "could you speak up?" and moves on) and the
+// status probe matched the order without it. The marks it writes on a repeat turn are ignored
+// ([`crate::checklist::Checklist::record_repeat`]).
 //
 // The `///` comments on the fields go into the schema as descriptions, which the model reads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -43,6 +53,8 @@ pub struct Turn {
     // `required` alone drops the null from the type, so it is put back.
     #[schemars(required, extend("type" = ["string", "null"]))]
     pub reason: Option<String>,
+    /// What their words just now do, given what you said last.
+    pub their_turn: TheirTurn,
     /// What the reply asks about.
     pub asking: Asking,
     /// The words to say next.
@@ -59,6 +71,7 @@ pub struct Head {
     pub checklist: Marks,
     pub status: Status,
     pub reason: Option<String>,
+    pub their_turn: TheirTurn,
     pub asking: Asking,
     pub reply: String,
     pub end_call: bool,
@@ -68,6 +81,7 @@ impl Head {
     /// The whole turn, for when the summary never came: the old summary stands in.
     pub fn into_turn(self, summary: String) -> Turn {
         Turn {
+            their_turn: self.their_turn,
             checklist: self.checklist,
             status: self.status,
             reason: self.reason,
@@ -93,6 +107,19 @@ pub fn head_of(partial: &str) -> Option<Head> {
         from = key + 1;
     }
     None
+}
+
+/// What the resident's words just now do, given what the agent said last (issue #55).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TheirTurn {
+    // They answer what was asked, or say something of their own. `//` comments: a doc comment
+    // on a variant would turn the schema's plain `enum` into a `oneOf`.
+    Answer,
+    // They didn't hear or follow what the agent just said, and want it again.
+    Repeat,
+    // They ask the agent something.
+    Question,
 }
 
 // In rising order: a call's status is the highest any turn reached (issue #11).
@@ -295,12 +322,18 @@ mod tests {
         required.sort();
         assert_eq!(
             required,
-            ["asking", "checklist", "end_call", "reason", "reply", "status", "summary"]
+            [
+                "asking", "checklist", "end_call", "reason", "reply", "status", "summary",
+                "their_turn"
+            ]
         );
         let order: Vec<&String> = schema["properties"].as_object().unwrap().keys().collect();
         assert_eq!(
             order,
-            ["checklist", "status", "reason", "asking", "reply", "end_call", "summary"]
+            [
+                "checklist", "status", "reason", "their_turn", "asking", "reply", "end_call",
+                "summary"
+            ]
         );
         let marks = &schema["properties"]["checklist"];
         assert_eq!(marks["required"].as_array().unwrap().len(), 5);
@@ -316,11 +349,16 @@ mod tests {
             serde_json::json!(["ok", "concern", "emergency"])
         );
         assert_eq!(schema["properties"]["reason"]["type"], serde_json::json!(["string", "null"]));
+        assert_eq!(
+            schema["properties"]["their_turn"]["enum"],
+            serde_json::json!(["answer", "repeat", "question"])
+        );
     }
 
     #[test]
     fn a_turn_parses_from_the_models_json() {
-        let raw = r#"{"checklist":{"feeling":"fine","falls":null,"pain":null,"eaten":null,
+        let raw = r#"{"their_turn":"answer",
+                      "checklist":{"feeling":"fine","falls":null,"pain":null,"eaten":null,
                       "needs":null},"status":"ok","reason":null,"asking":"falls",
                       "reply":"Have you had a fall?","end_call":false,"summary":"Feels fine."}"#;
         let turn: Turn = serde_json::from_str(raw).unwrap();
@@ -331,7 +369,8 @@ mod tests {
     #[test]
     fn the_head_is_ready_once_the_summary_starts() {
         // Spaced the way Ollama writes it.
-        let partial = r#"{"checklist": {"feeling": "fine", "falls": null, "pain": null,
+        let partial = r#"{"their_turn": "answer",
+            "checklist": {"feeling": "fine", "falls": null, "pain": null,
             "eaten": null, "needs": null} , "status": "ok" , "reason": null , "asking": "falls" ,
             "reply": "Good. Did you write a \"summary\" today? Any falls?" , "end_call": false ,
             "summ"#;
@@ -345,7 +384,8 @@ mod tests {
 
     #[test]
     fn no_head_before_end_call_is_written() {
-        let partial = r#"{"checklist": {"feeling": "fine", "falls": null, "pain": null,
+        let partial = r#"{"their_turn": "answer",
+            "checklist": {"feeling": "fine", "falls": null, "pain": null,
             "eaten": null, "needs": null}, "status": "ok", "reason": null, "asking": "falls",
             "reply": "Any falls?""#;
         assert_eq!(head_of(partial), None);

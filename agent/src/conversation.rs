@@ -56,7 +56,7 @@ use crate::end_of_turn::{self, ASK_AT, EndOfTurn, HOLD_BELOW, HOLD_TO, PRE_SPEEC
 use crate::checklist::{self, Asking, Checklist};
 use crate::escalation::{self, Escalation, Trigger};
 use crate::listen::Segmenter;
-use crate::llm::{Head, Llm, Message, Reply, Role, SYSTEM_PROMPT, Status};
+use crate::llm::{Head, Llm, Message, Reply, Role, SYSTEM_PROMPT, Status, TheirTurn};
 use crate::stt::{self, Stt, Transcript};
 use crate::telephony::{CallControl, MarkId, Media, Speaker};
 use crate::tts::{Speech, Tone, Tts};
@@ -584,14 +584,21 @@ impl<L: Llm + 'static> Call<L> {
             !turn.end_call && (turn.asking == Asking::Goodbye || says_goodbye(&turn.reply));
         turn.end_call |= backstop;
         let heard = self.turns.last().map_or("", |t| t.heard.as_str());
-        let recorded = self.checklist.record(&turn.checklist, turn.asking, heard);
+        // The model judges whether they asked to hear the question again; that answers nothing
+        // (issue #55).
+        let recorded = if turn.their_turn == TheirTurn::Repeat {
+            self.checklist.record_repeat(turn.asking, heard)
+        } else {
+            self.checklist.record(&turn.checklist, turn.asking, heard)
+        };
         eprintln!(
-            "agent: {}: {} {:?} [asking {:?}, {:?}{}{}] (LLM {} ms, TTS {} ms)\n\
+            "agent: {}: {} {:?} [{:?}, asking {:?}, {:?}{}{}] (LLM {} ms, TTS {} ms)\n\
              agent: {}: marked {:?}{}",
             self.id,
             // An `emergency` turn's words are never spoken.
             if speech.is_some() { "said" } else { "the LLM wrote (not spoken)" },
             turn.reply,
+            turn.their_turn,
             turn.asking,
             turn.status,
             turn.reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default(),
@@ -625,6 +632,7 @@ impl<L: Llm + 'static> Call<L> {
             eprintln!("agent: {}: summary {:?}", self.id, self.summary);
         }
         if let Some(log) = self.turns.last_mut() {
+            log.their_turn = Some(turn.their_turn);
             log.reply = Some(turn.reply.clone());
             log.status = Some(turn.status);
             log.reason = turn.reason.clone();

@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::checklist::{Asking, Checklist};
 use crate::escalation::Escalation;
-use crate::llm::Status;
+use crate::llm::{Status, TheirTurn};
 
 #[derive(Debug, Serialize)]
 pub struct CallLog {
@@ -165,6 +165,8 @@ pub struct TurnLog {
     /// Counting from 1.
     pub turn: usize,
     pub heard: String,
+    /// What the model judged the words to do: answer, repeat or question (issue #55).
+    pub their_turn: Option<TheirTurn>,
     pub reply: Option<String>,
     pub status: Option<Status>,
     pub reason: Option<String>,
