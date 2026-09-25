@@ -29,14 +29,17 @@ asterisk-cli: ## Open the Asterisk console
 sip-accounts: ## Print what to type into the two softphones, passwords included
 	@asterisk/configure.sh accounts
 
-# Silero VAD, whisper tiny.en and the Piper voices, into models/ (gitignored). URLs as fetched
-# 2026-09-24; the voices' paths follow piper-rs 0.2.0's examples/usage.rs. hfc_female is the
-# agent's voice, picked by ear; lessac, the voice before it, stays downloaded.
+# Silero VAD, whisper tiny.en, Smart Turn v3.2 and the Piper voices, into models/ (gitignored).
+# URLs as fetched 2026-09-24; Smart Turn's is the one the turn-detection prototype used (branch
+# prototype/turn-detection, turn/prototype/PROTOTYPE_README.md); the voices' paths follow
+# piper-rs 0.2.0's examples/usage.rs. hfc_female is the agent's voice, picked by ear; lessac,
+# the voice before it, is the eval's residents.
 PIPER_VOICES := https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US
-models: ## Download the VAD, speech-to-text and voice models
+models: ## Download the VAD, speech-to-text, end-of-turn and voice models
 	mkdir -p models
 	cd models && test -f silero_vad.onnx || curl -fL -O https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx
 	cd models && test -f ggml-tiny.en.bin || curl -fL -O https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+	cd models && test -f smart-turn-v3.2-cpu.onnx || curl -fL -O https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx
 	cd models && for v in hfc_female/medium/en_US-hfc_female-medium lessac/medium/en_US-lessac-medium; do \
 		f=$$(basename $$v); \
 		test -f $$f.onnx || curl -fL -O $(PIPER_VOICES)/$$v.onnx; \

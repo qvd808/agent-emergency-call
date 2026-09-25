@@ -53,6 +53,8 @@ pub(crate) enum Command {
     Play(Vec<i16>),
     Mark(MarkId),
     Clear(oneshot::Sender<Cleared>),
+    Pause,
+    Resume,
     Hangup,
 }
 
@@ -155,9 +157,20 @@ impl Speaker {
         let _ = self.commands.send(Command::Mark(id));
     }
 
-    /// Drops whatever audio has not been written to the line yet, for barge-in. Up to one
-    /// frame already inside the resampler still goes out. After the call has ended there is
-    /// nothing to drop.
+    /// Stops taking queued audio: the line gets silence until [`Speaker::resume`], and marks
+    /// wait with their audio. For barge-in (issue #19): the resident may only be saying "yeah".
+    pub fn pause(&self) {
+        let _ = self.commands.send(Command::Pause);
+    }
+
+    /// Plays on from where [`Speaker::pause`] stopped.
+    pub fn resume(&self) {
+        let _ = self.commands.send(Command::Resume);
+    }
+
+    /// Drops whatever audio has not been written to the line yet, for barge-in, and ends any
+    /// pause. Up to one frame already inside the resampler still goes out. After the call has
+    /// ended there is nothing to drop.
     pub async fn clear(&self) -> Cleared {
         let (reply, answer) = oneshot::channel();
         if self.commands.send(Command::Clear(reply)).is_err() {

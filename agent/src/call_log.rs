@@ -34,6 +34,101 @@ pub struct CallLog {
     pub escalation: Option<Escalation>,
     pub concern_flag: Option<ConcernFlag>,
     pub ended_by: EndedBy,
+    /// Every time the resident talked over the agent (issue #19).
+    pub barge_ins: Vec<BargeInLog>,
+    /// How much of the agent's own voice came back on the resident's line (issue #34).
+    pub echo: EchoLog,
+}
+
+/// One time the resident talked over the agent and its audio paused (issue #19).
+#[derive(Debug, Clone, Serialize)]
+pub struct BargeInLog {
+    /// Seconds since the call started.
+    pub paused_at_s: f64,
+    /// What the agent was saying.
+    pub over: String,
+    /// `confirmed: ...` (the resident took the turn, and why), `resumed` (the agent played on),
+    /// or what else ended the pause.
+    pub outcome: String,
+    pub paused_ms: u64,
+}
+
+/// The resident's line while the agent talked, against its level while neither side did
+/// (issue #34, narrowed to the demo setup). On a call where the resident stays silent, what the
+/// line carries while the agent talks is the agent's own voice coming back, plus noise, and
+/// every VAD fire then is a false one. Levels are RMS per VAD window, in dB below full scale.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct EchoLog {
+    /// Seconds of the agent's audio going out, not paused.
+    pub agent_talking_s: f64,
+    /// The agent's own speech, as sent.
+    pub agent_level_dbfs: Option<f64>,
+    pub line_while_talking_p50_dbfs: Option<f64>,
+    pub line_while_talking_p95_dbfs: Option<f64>,
+    /// VAD windows at or over the speech threshold while the agent talked, out of
+    /// `windows_while_talking`. The resident's real barge-ins count too.
+    pub vad_fires_while_talking: u32,
+    pub windows_while_talking: u32,
+    /// Neither side talking: the line's noise floor.
+    pub line_quiet_p50_dbfs: Option<f64>,
+}
+
+/// Collects an [`EchoLog`] over a call.
+#[derive(Debug, Default)]
+pub struct EchoMeter {
+    while_talking: Vec<f64>,
+    quiet: Vec<f64>,
+    fires: u32,
+    agent_squares: f64,
+    agent_samples: u64,
+}
+
+/// Quieter than any real line; stands in for exact digital silence.
+const FLOOR_DBFS: f64 = -120.0;
+
+fn dbfs(mean_square: f64) -> f64 {
+    if mean_square <= 0.0 { FLOOR_DBFS } else { (10.0 * mean_square.log10()).max(FLOOR_DBFS) }
+}
+
+impl EchoMeter {
+    /// One VAD window of the resident's line, in [-1, 1], with its speech probability.
+    pub fn window(&mut self, samples: &[f32], p: f32, agent_talking: bool) {
+        let mean_square =
+            samples.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / samples.len().max(1) as f64;
+        let level = dbfs(mean_square);
+        if agent_talking {
+            self.while_talking.push(level);
+            self.fires += (p >= turn::VAD_ON) as u32;
+        } else if p < turn::VAD_ON {
+            self.quiet.push(level);
+        }
+    }
+
+    /// Audio the agent queued to say.
+    pub fn agent_audio(&mut self, audio: &[i16]) {
+        self.agent_squares += audio.iter().map(|&s| (s as f64 / 32_768.0).powi(2)).sum::<f64>();
+        self.agent_samples += audio.len() as u64;
+    }
+
+    pub fn log(&self) -> EchoLog {
+        let percentile = |values: &[f64], p: f64| -> Option<f64> {
+            let mut sorted = values.to_vec();
+            sorted.sort_by(f64::total_cmp);
+            let rank = ((p * sorted.len() as f64).ceil() as usize).max(1);
+            sorted.get(rank - 1).map(|v| (v * 10.0).round() / 10.0)
+        };
+        EchoLog {
+            agent_talking_s: self.while_talking.len() as f64 * turn::WINDOW_S,
+            agent_level_dbfs: (self.agent_samples > 0).then(|| {
+                (dbfs(self.agent_squares / self.agent_samples as f64) * 10.0).round() / 10.0
+            }),
+            line_while_talking_p50_dbfs: percentile(&self.while_talking, 0.5),
+            line_while_talking_p95_dbfs: percentile(&self.while_talking, 0.95),
+            vad_fires_while_talking: self.fires,
+            windows_while_talking: self.while_talking.len() as u32,
+            line_quiet_p50_dbfs: percentile(&self.quiet, 0.5),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -78,6 +173,14 @@ pub struct TurnLog {
     pub end_call: bool,
     /// When the agent decided the resident's turn was over, in seconds since the call started.
     pub taken_at_s: f64,
+    /// Earlier times the agent took this turn and gave it back because the resident went on
+    /// before any reply had played (issue #19).
+    pub taken_back_at_s: Vec<f64>,
+    /// Smart Turn's P(complete) at each pause in the turn (issue #19).
+    pub smart_turn_p: Vec<f32>,
+    /// Whether Smart Turn held the floor at the pause that ended the turn, so the agent waited
+    /// 3 s instead of 1.5 s.
+    pub held: bool,
     /// From the end of the resident's speech to that decision: the end-of-turn wait, plus any
     /// wait for the last transcript.
     pub end_of_turn_ms: u64,
@@ -92,7 +195,7 @@ pub struct TurnLog {
     pub tts_ms: Option<u64>,
     /// Whether the reply was slow enough that the acknowledgement played first (issue #45).
     pub acknowledged: bool,
-    /// Whether the resident spoke over the agent. Always false until barge-in (issue #19).
+    /// Whether the resident took the turn by talking over the reply (issue #19).
     pub interrupted: bool,
 }
 
@@ -179,6 +282,21 @@ mod tests {
     fn an_escalated_call_raises_none() {
         assert_eq!(flag(Status::Emergency, EndedBy::Escalated), None);
         assert_eq!(flag(Status::Concern, EndedBy::Escalated), None);
+    }
+
+    #[test]
+    fn echo_levels_are_in_db_below_full_scale() {
+        let mut meter = EchoMeter::default();
+        // A full-scale square wave is 0 dBFS; one at a tenth of it is -20 dBFS.
+        meter.window(&[1.0, -1.0, 1.0, -1.0], 0.1, false);
+        meter.window(&[0.1, -0.1, 0.1, -0.1], 0.9, true);
+        meter.window(&[0.0; 4], 0.1, true);
+        let log = meter.log();
+        assert_eq!(log.line_quiet_p50_dbfs, Some(0.0));
+        assert_eq!(log.line_while_talking_p50_dbfs, Some(FLOOR_DBFS));
+        assert_eq!(log.line_while_talking_p95_dbfs, Some(-20.0));
+        assert_eq!((log.vad_fires_while_talking, log.windows_while_talking), (1, 2));
+        assert_eq!(log.agent_level_dbfs, None);
     }
 
     #[test]

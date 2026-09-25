@@ -362,10 +362,10 @@ fn barge_in(w: &mut String, runs: &[Run]) {
     let _ = writeln!(w, "\n## Barge-in (report only)\n");
     let _ = writeln!(
         w,
-        "Agent stopped after: from the resident starting to talk over the agent to the agent's \
-         last loud frame, as the resident hears it.\n"
+        "Talked over: how much of the agent's audio reached the resident while they were saying \
+         the line over it.\n"
     );
-    let _ = writeln!(w, "| Persona | Run | Said over the agent | Agent stopped after (ms) | Logged as interrupted |");
+    let _ = writeln!(w, "| Persona | Run | Said over the agent | Talked over (ms) | Logged as interrupted |");
     let _ = writeln!(w, "|---|---|---|---|---|");
     for run in runs {
         for line in run.outcome.lines.iter().filter(|l| l.interrupt) {
@@ -378,8 +378,25 @@ fn barge_in(w: &mut String, runs: &[Run]) {
                 run.persona.name,
                 run.repeat,
                 line.text,
-                line.agent_stopped_ms.map_or("had already stopped".into(), |v| format!("{v:.0}")),
+                format!("{:.0}", line.talked_over_ms),
                 if interrupted { "yes" } else { "no" },
+            );
+        }
+    }
+    let _ = writeln!(w, "\nEvery pause of the agent's audio, from its call log:\n");
+    let _ = writeln!(w, "| Persona | Run | At (s) | Over | Outcome | Paused (ms) |\n|---|---|---|---|---|---|");
+    for run in runs {
+        let Some(log) = &run.log else { continue };
+        for event in log["barge_ins"].as_array().map_or(&[][..], Vec::as_slice) {
+            let _ = writeln!(
+                w,
+                "| {} | {} | {:.1} | \"{}\" | {} | {} |",
+                run.persona.name,
+                run.repeat,
+                event["paused_at_s"].as_f64().unwrap_or(0.0),
+                event["over"].as_str().unwrap_or(""),
+                event["outcome"].as_str().unwrap_or(""),
+                event["paused_ms"].as_u64().unwrap_or(0),
             );
         }
     }

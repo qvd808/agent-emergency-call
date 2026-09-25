@@ -78,14 +78,14 @@ pub enum Ended {
 pub struct LineResult {
     pub text: String,
     pub interrupt: bool,
-    pub started_ms: f64,
     pub ended_ms: Option<f64>,
     pub pauses: Vec<PauseResult>,
     /// From the end of the line to the agent's next speech, as the resident hears it.
     pub reply_ms: Option<f64>,
-    /// For a line said over the agent: from the resident starting to the agent's last loud
-    /// frame, once it has gone quiet. `None` if the agent had already stopped.
-    pub agent_stopped_ms: Option<f64>,
+    /// For a line said over the agent: how much of the agent's audio came while the resident
+    /// was saying it. Half duplex, the agent talks on to the end of its sentence; with
+    /// barge-in, only until it pauses.
+    pub talked_over_ms: f64,
 }
 
 pub struct PauseResult {
@@ -110,13 +110,16 @@ struct Ear {
 }
 
 impl Ear {
-    fn hear(&mut self, pcm: &[u8], now: Instant) {
-        if samples_from_le_bytes(pcm).iter().any(|s| s.unsigned_abs() >= LOUD) {
+    /// Whether the frame was loud.
+    fn hear(&mut self, pcm: &[u8], now: Instant) -> bool {
+        let loud = samples_from_le_bytes(pcm).iter().any(|s| s.unsigned_abs() >= LOUD);
+        if loud {
             if self.last_loud.is_none_or(|t| now - t >= QUIET_GAP) {
                 self.onset = Some(now);
             }
             self.last_loud = Some(now);
         }
+        loud
     }
 
     fn quiet_for(&self, now: Instant) -> Option<Duration> {
@@ -155,28 +158,27 @@ impl Resident {
         self.t0_ms + (at - self.t0).as_secs_f64() * 1000.0
     }
 
-    fn start_line(&mut self, line: Rendered, interrupt: bool, now: Instant) {
+    fn start_line(&mut self, line: Rendered, interrupt: bool) {
         self.lines.push(LineResult {
             text: line.text.clone(),
             interrupt,
-            started_ms: self.unix_ms(now),
             ended_ms: None,
             pauses: Vec::new(),
             reply_ms: None,
-            agent_stopped_ms: None,
+            talked_over_ms: 0.0,
         });
         self.phase = Phase::Speaking { line, pos: 0 };
     }
 
     /// The next thing to do once the agent has finished speaking.
-    fn next_act(&mut self, now: Instant) {
+    fn next_act(&mut self) {
         match self.acts.pop_front() {
-            Some(Act::Say(line)) => self.start_line(line, false, now),
+            Some(Act::Say(line)) => self.start_line(line, false),
             // Only reached if a script starts with one; there is no reply yet to talk over.
-            Some(Act::Interrupt(_, line)) => self.start_line(line, true, now),
+            Some(Act::Interrupt(_, line)) => self.start_line(line, true),
             Some(Act::Silent) => self.phase = Phase::Idle,
             None => match self.fallback.pop_front() {
-                Some(line) => self.start_line(line, false, now),
+                Some(line) => self.start_line(line, false),
                 None => self.phase = Phase::Idle,
             },
         }
@@ -184,13 +186,13 @@ impl Resident {
 
     /// The resident's next 20 ms for the line.
     fn next_frame(&mut self, now: Instant) -> Vec<i16> {
-        self.note_agent(now);
+        self.note_agent();
         match &mut self.phase {
             Phase::Idle => {}
             Phase::AwaitAgent { since } => {
                 let spoke = self.ear.onset_since(*since).is_some();
                 if spoke && self.ear.quiet_for(now).is_some_and(|q| q >= RESPOND_AFTER) {
-                    self.next_act(now);
+                    self.next_act();
                 }
             }
             Phase::AwaitOnset { since, after, .. } => {
@@ -201,7 +203,7 @@ impl Resident {
                     else {
                         unreachable!()
                     };
-                    self.start_line(line, true, now);
+                    self.start_line(line, true);
                 }
             }
             Phase::Speaking { .. } => {}
@@ -244,27 +246,29 @@ impl Resident {
         frame
     }
 
-    /// Times the agent against the resident's latest line: when its reply began, and for a
-    /// line said over it, when it stopped.
-    fn note_agent(&mut self, now: Instant) {
-        let (onset, last_loud) = (self.ear.onset, self.ear.last_loud);
-        let quiet = self.ear.quiet_for(now);
+    /// One frame of the agent's audio.
+    fn hear(&mut self, pcm: &[u8], now: Instant) {
+        let loud = self.ear.hear(pcm, now);
+        if loud
+            && matches!(self.phase, Phase::Speaking { .. })
+            && let Some(line) = self.lines.last_mut()
+            && line.interrupt
+        {
+            line.talked_over_ms += (pcm.len() / 2) as f64 * 1000.0 / LINE_RATE_HZ as f64;
+        }
+    }
+
+    /// Times the agent's reply to the resident's latest line.
+    fn note_agent(&mut self) {
         let t0 = (self.t0, self.t0_ms);
         let unix = |at: Instant| t0.1 + (at - t0.0).as_secs_f64() * 1000.0;
+        let onset = self.ear.onset;
         let Some(line) = self.lines.last_mut() else { return };
         if let (Some(ended), None, Some(onset)) = (line.ended_ms, line.reply_ms, onset)
             && !line.interrupt
             && unix(onset) >= ended
         {
             line.reply_ms = Some(unix(onset) - ended);
-        }
-        if line.interrupt
-            && line.agent_stopped_ms.is_none()
-            && let (Some(last), Some(quiet)) = (last_loud, quiet)
-            && quiet >= QUIET_GAP
-            && unix(last) >= line.started_ms
-        {
-            line.agent_stopped_ms = Some(unix(last) - line.started_ms);
         }
     }
 }
@@ -314,7 +318,7 @@ pub async fn run(
                 decoder.push(&buf[..n]);
                 while let Some(message) = decoder.next_message()? {
                     match message {
-                        Message::Audio { pcm, .. } => resident.ear.hear(&pcm, Instant::now()),
+                        Message::Audio { pcm, .. } => resident.hear(&pcm, Instant::now()),
                         Message::Hangup => break 'call Ended::AgentHungUp,
                         _ => {}
                     }

@@ -96,6 +96,8 @@ async fn main() -> Result<(), Error> {
         lines: services.lines.clone(),
         dispatcher: services.dispatcher.clone(),
         calls_dir: services.calls_dir.clone(),
+        barge_in: services.barge_in,
+        end_of_turn: services.end_of_turn.clone(),
     };
 
     // The residents.

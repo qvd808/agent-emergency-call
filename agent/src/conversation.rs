@@ -23,14 +23,23 @@
 //! model is still writing the turn's summary ([`Head`]). If it still hasn't been queued
 //! [`ACK_AFTER`] after the resident stopped, a fixed acknowledgement ("Okay.") fills the wait.
 //!
-//! A first version, to be built on:
-//! - The resident's turn ends after [`TURN_END`] of silence, issue #12's base. Smart Turn's
-//!   hold and barge-in land with issue #19.
-//! - Half duplex: while the agent thinks or speaks, it doesn't listen. Its own voice can't be
-//!   mistaken for the resident's (nor set off the keyword rule: the escalation script itself
-//!   says "call nine one one"), but anything the resident says then is lost, a keyword phrase
-//!   included.
+//! Turn-taking (issue #19), the first iteration settled in issue #12:
+//! - **End of turn.** The resident's turn ends after [`TURN_END`] of silence. Smart Turn, asked
+//!   at 0.2 s of each pause, can only hold the floor: below p = 0.05 the agent waits up to
+//!   3 s instead ([`end_of_turn`](crate::end_of_turn)).
+//! - **Taking the turn back.** If the resident starts again while the agent is still thinking,
+//!   before any reply has played, the agent drops the answer in progress and listens on: the
+//!   decision was premature, and nothing the resident could hear has happened yet.
+//! - **Barge-in, BI-2** ([`turn::barge_in`]). While the agent talks, 2 VAD windows of speech
+//!   pause its audio. 0.8 s of speech, 3 words or a keyword gives the resident the turn and
+//!   drops the rest of the agent's speech; otherwise it plays on after 1 s of silence, and
+//!   what was said over it is dropped. Only the resident's speech during a pause is
+//!   transcribed, so the agent's own voice is never heard as the resident's unless it pauses
+//!   the agent first, and the escalation script, which says "call nine one one", is never
+//!   paused or heard. The keyword rule checks every transcript, so a "help" said over the
+//!   agent always escalates.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -38,10 +47,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::sleep_until;
+use turn::barge_in::{self, BargeIn, Confirmed};
 use turn::vad::{Silero, WINDOW};
 
 use crate::audio::CORE_RATE_HZ;
-use crate::call_log::{self, CallLog, EndedBy, Line, TurnLog, Who};
+use crate::call_log::{self, BargeInLog, CallLog, EchoMeter, EndedBy, Line, TurnLog, Who};
+use crate::end_of_turn::{self, ASK_AT, EndOfTurn, HOLD_BELOW, HOLD_TO, PRE_SPEECH};
 use crate::checklist::{self, Asking, Checklist};
 use crate::escalation::{self, Escalation, Trigger};
 use crate::listen::Segmenter;
@@ -54,6 +65,15 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 /// Silence that ends the resident's turn: the base wait in issue #12's first iteration.
 pub const TURN_END: f64 = 1.5;
+
+/// Times one turn may be taken back before the agent answers regardless. Bounds a loop where
+/// something other than the resident keeps restarting the turn, such as the echo of the
+/// holding line, which would otherwise keep an agent fault from ever escalating (inferred
+/// risk; not seen).
+const MAX_TAKE_BACKS: usize = 2;
+
+/// Resident audio kept for Smart Turn, which looks at 8 s at most.
+const RECENT_SAMPLES: usize = (end_of_turn::WINDOW_S * CORE_RATE_HZ as f64) as usize;
 
 /// How long the agent waits for an answer once it has finished speaking (issue #11).
 const SILENCE_WAIT: Duration = Duration::from_secs(10);
@@ -136,6 +156,11 @@ pub struct Services<L> {
     pub dispatcher: String,
     /// Where call logs go.
     pub calls_dir: PathBuf,
+    /// Whether the resident can talk over the agent. Off, the agent is half duplex: it doesn't
+    /// listen while it talks.
+    pub barge_in: bool,
+    /// Smart Turn, to hold the floor at a pause. `None`: every turn ends after [`TURN_END`].
+    pub end_of_turn: Option<EndOfTurn>,
 }
 
 impl<L> Clone for Services<L> {
@@ -147,6 +172,8 @@ impl<L> Clone for Services<L> {
             lines: self.lines.clone(),
             dispatcher: self.dispatcher.clone(),
             calls_dir: self.calls_dir.clone(),
+            barge_in: self.barge_in,
+            end_of_turn: self.end_of_turn.clone(),
         }
     }
 }
@@ -186,6 +213,15 @@ struct Heard {
     result: Result<Transcript, stt::Error>,
     /// When the resident stopped saying it, by the wall clock.
     stopped: Instant,
+    /// Said over the agent: the pause of its audio that the utterance was cut in.
+    over: Option<u64>,
+}
+
+/// Smart Turn's verdict on one pause.
+struct Verdict {
+    /// Which pause ([`TurnSoFar::asked`]).
+    pause: u64,
+    result: Result<end_of_turn::Verdict, end_of_turn::Error>,
 }
 
 /// How one of the resident's turns was answered.
@@ -199,6 +235,8 @@ enum Answer {
 
 /// A turn to act on before the model has finished it: everything but the summary.
 struct Early {
+    /// The turn it answers ([`Call::generation`]); a turn given back makes it stale.
+    generation: u64,
     /// The turn with an empty summary; `took` is the time until the head was written.
     reply: Reply,
     speech: Option<Speech>,
@@ -216,7 +254,7 @@ enum After {
 }
 
 /// The resident's turn in progress.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct TurnSoFar {
     /// Utterances cut so far.
     utterances: usize,
@@ -226,12 +264,34 @@ struct TurnSoFar {
     stt_ms: u64,
     /// When the resident last stopped, by the wall clock.
     stopped: Option<Instant>,
+    /// When the resident's speech in this turn began, in media time.
+    start: Option<f64>,
+    /// The pause Smart Turn was asked about, if it has been asked about this one.
+    asked: Option<u64>,
+    /// Smart Turn holds the floor at this pause.
+    hold: bool,
+    smart_turn_p: Vec<f32>,
+    taken_back_at_s: Vec<f64>,
 }
 
 impl TurnSoFar {
     /// The turn is over and every transcript is in.
     fn ready(&self, segmenter: &Segmenter) -> bool {
-        self.utterances > 0 && self.outstanding == 0 && segmenter.quiet_for() >= TURN_END
+        let wait = if self.hold { HOLD_TO } else { TURN_END };
+        self.utterances > 0 && self.outstanding == 0 && segmenter.quiet_for() >= wait
+    }
+
+    /// Adds what the resident said after this turn was taken, when it is given back.
+    fn merge(&mut self, later: TurnSoFar) {
+        self.utterances += later.utterances;
+        self.outstanding += later.outstanding;
+        self.words.extend(later.words);
+        self.stt_ms += later.stt_ms;
+        self.stopped = later.stopped.or(self.stopped);
+        self.start = self.start.or(later.start);
+        self.asked = later.asked;
+        self.hold = later.hold;
+        self.smart_turn_p.extend(later.smart_turn_p);
     }
 }
 
@@ -267,6 +327,27 @@ struct Call<L> {
     status: Status,
     reasons: Vec<String>,
     summary: String,
+    /// Counts the turns answered, so a reply to a turn given back is known to be stale.
+    generation: u64,
+    /// The turn being answered, kept so it can be given back if the resident goes on.
+    answering: Option<TurnSoFar>,
+    /// The acknowledgement has played for the turn being answered.
+    acked: bool,
+    /// Counts the pauses Smart Turn has been asked about.
+    pauses: u64,
+    barge: BargeIn,
+    /// While the agent's audio is paused for the resident: since when, in seconds since the
+    /// call started.
+    paused: Option<f64>,
+    /// Counts the pauses, and lists the ones the agent played on from: what was said in those
+    /// was a backchannel, not the resident's turn.
+    pause_id: u64,
+    resumed: Vec<u64>,
+    /// What the agent's current speech says, and the turn it answers if it is a reply.
+    speaking_text: String,
+    speaking_turn: Option<usize>,
+    barge_ins: Vec<BargeInLog>,
+    echo: EchoMeter,
 }
 
 impl<L: Llm + 'static> Call<L> {
@@ -280,7 +361,17 @@ impl<L: Llm + 'static> Call<L> {
         self.marks += 1;
         let first = self.marks;
         self.speaker.mark(first);
+        self.echo.agent_audio(&audio);
         self.speaker.play(audio);
+        self.speaking_text = text.to_string();
+        self.speaking_turn = None;
+        if self.paused.is_some() {
+            // Not reached today: nothing new is said while the agent is paused, apart from the
+            // escalation script, which ends the pause first.
+            self.speaker.resume();
+            self.end_pause("replaced by new speech".to_string());
+        }
+        self.barge.reset();
         if after != After::Listen {
             self.speaker.play(vec![0; (TAIL * CORE_RATE_HZ as f64) as usize]);
         }
@@ -303,7 +394,7 @@ impl<L: Llm + 'static> Call<L> {
     fn respond(
         &mut self,
         turn: &mut TurnSoFar,
-        history: &mut Vec<Message>,
+        history: &[Message],
         early: &mpsc::UnboundedSender<Early>,
     ) -> Thinking {
         let turn = std::mem::take(turn);
@@ -320,6 +411,9 @@ impl<L: Llm + 'static> Call<L> {
             turn: self.turns.len() + 1,
             heard: heard.clone(),
             taken_at_s: self.at(),
+            taken_back_at_s: turn.taken_back_at_s.clone(),
+            smart_turn_p: turn.smart_turn_p.clone(),
+            held: turn.hold,
             end_of_turn_ms: self.stopped.elapsed().as_millis() as u64,
             stt_ms: turn.stt_ms,
             ..TurnLog::default()
@@ -327,11 +421,126 @@ impl<L: Llm + 'static> Call<L> {
         self.turn_deadline = Some(self.stopped + TURN_DEADLINE);
         self.ack_at = Some(self.stopped + ACK_AFTER);
         self.silence = None;
-        let history = std::mem::take(history);
+        self.generation += 1;
+        self.acked = false;
+        self.answering = Some(turn);
         let note = self.checklist.note(checklist::wants_to_end(&heard));
         let (services, speaker, early) =
             (self.services.clone(), self.speaker.clone(), early.clone());
-        Some(tokio::spawn(respond(history, heard, note, services, speaker, early)))
+        let generation = self.generation;
+        Some(tokio::spawn(respond(history.to_vec(), heard, note, services, speaker, early, generation)))
+    }
+
+    /// The agent's audio is going out: queued or playing, and not paused.
+    fn talking(&self) -> bool {
+        self.speaking.is_some() && self.paused.is_none()
+    }
+
+    /// The resident started talking over the agent: holds its audio where it is.
+    fn pause(&mut self) {
+        self.speaker.pause();
+        self.paused = Some(self.at());
+        self.pause_id += 1;
+        eprintln!("agent: {}: the resident is talking over the agent; paused", self.id);
+    }
+
+    /// It was only a "yeah": plays on from where it paused.
+    fn resume(&mut self) {
+        self.speaker.resume();
+        self.resumed.push(self.pause_id);
+        self.end_pause("resumed".to_string());
+    }
+
+    /// Notes how a pause ended.
+    fn end_pause(&mut self, outcome: String) {
+        let Some(since) = self.paused.take() else { return };
+        let paused_ms = ((self.at() - since) * 1000.0) as u64;
+        eprintln!("agent: {}: barge-in {outcome}, after {paused_ms} ms paused", self.id);
+        self.barge_ins.push(BargeInLog {
+            paused_at_s: since,
+            over: self.speaking_text.clone(),
+            outcome,
+            paused_ms,
+        });
+    }
+
+    /// The resident has the turn: drops the rest of the agent's speech, and listens.
+    async fn yield_floor(&mut self, why: Confirmed) {
+        // A late transcript can confirm after the agent had played on.
+        self.paused.get_or_insert_with(|| self.started.elapsed().as_secs_f64());
+        self.speaker.clear().await;
+        self.barge.reset();
+        self.end_pause(match why {
+            Confirmed::Speech(s) => format!("confirmed: {s:.1} s of speech"),
+            Confirmed::Words(n) => format!("confirmed: {n} words"),
+            Confirmed::Keyword(k) => format!("confirmed: the word {k:?}"),
+        });
+        if let Some(index) = self.speaking_turn.take() {
+            self.turns[index].interrupted = true;
+        }
+        self.speaking = None;
+        self.first_audio = None;
+        self.silence = None;
+    }
+
+    /// Whether the turn being answered can still be given back: nothing has been said since,
+    /// not even the acknowledgement.
+    fn can_take_back(&self, thinking: &Thinking, turn: &TurnSoFar) -> bool {
+        thinking.is_some()
+            && self.speaking.is_none()
+            && !self.acked
+            && self.escalation.is_none()
+            && self.answering.as_ref().is_some_and(|a| a.taken_back_at_s.len() < MAX_TAKE_BACKS)
+            && turn.taken_back_at_s.len() < MAX_TAKE_BACKS
+    }
+
+    /// The resident went on after the agent had taken the turn, before any reply played:
+    /// drops the answer in progress and gives the turn back.
+    fn take_back(&mut self, thinking: &mut Thinking, turn: &mut TurnSoFar) {
+        let Some(task) = thinking.take() else { return };
+        task.abort();
+        // Any reply already sent from it is stale.
+        self.generation += 1;
+        self.turn_deadline = None;
+        self.ack_at = None;
+        let taken_at = self.turns.pop().map_or_else(|| self.at(), |log| log.taken_at_s);
+        let mut given_back = self.answering.take().unwrap_or_default();
+        given_back.taken_back_at_s.push(taken_at);
+        given_back.merge(std::mem::take(turn));
+        *turn = given_back;
+        eprintln!("agent: {}: the resident went on; gave the turn back", self.id);
+    }
+
+    /// Asks Smart Turn about the pause the resident is in, once per pause.
+    fn consult(
+        &mut self,
+        turn: &mut TurnSoFar,
+        segmenter: &Segmenter,
+        recent: &VecDeque<f32>,
+        verdicts: &mpsc::UnboundedSender<Verdict>,
+    ) {
+        let Some(start) = turn.start else { return };
+        if segmenter.quiet_for() == 0.0 {
+            // Talking again: the next pause gets its own verdict.
+            turn.asked = None;
+            turn.hold = false;
+            return;
+        }
+        let Some(model) = &self.services.end_of_turn else { return };
+        if turn.asked.is_some() || segmenter.quiet_for() < ASK_AT {
+            return;
+        }
+        self.pauses += 1;
+        turn.asked = Some(self.pauses);
+        // The whole turn and a little before it, at most the model's 8 s.
+        let from = (start - PRE_SPEECH).max(segmenter.now() - end_of_turn::WINDOW_S);
+        let n = (((segmenter.now() - from) * CORE_RATE_HZ as f64) as usize).min(recent.len());
+        let audio: Vec<f32> = recent.iter().skip(recent.len() - n).copied().collect();
+        let (model, verdicts, pause) = (model.clone(), verdicts.clone(), self.pauses);
+        tokio::spawn(async move {
+            let result = model.ask(audio).await;
+            let _ = verdicts.send(Verdict { pause, result });
+        });
     }
 
     /// The reply is slow: fills the wait with an acknowledgement. The reply, once queued, plays
@@ -339,6 +548,7 @@ impl<L: Llm + 'static> Call<L> {
     fn acknowledge(&mut self) {
         let ack = self.acks % ACKS.len();
         self.acks += 1;
+        self.acked = true;
         self.speaker.play(self.services.lines.acks[ack].clone());
         self.transcript.push(Line { speaker: Who::Agent, text: ACKS[ack].into(), at_s: self.at() });
         if let Some(log) = self.turns.last_mut() {
@@ -429,6 +639,7 @@ impl<L: Llm + 'static> Call<L> {
         };
         let after = if turn.end_call { After::HangUp } else { After::Listen };
         let first = self.say(speech.audio, &reply.turn.reply, after);
+        self.speaking_turn = Some(self.turns.len() - 1);
         self.first_audio = Some((first, self.stopped, self.turns.len() - 1));
     }
 
@@ -451,7 +662,10 @@ impl<L: Llm + 'static> Call<L> {
         self.turn_deadline = None;
         self.ack_at = None;
         self.first_audio = None;
+        // The script always plays through: no barge-in from here on.
         self.speaker.clear().await;
+        self.end_pause("ended by the escalation".to_string());
+        self.barge.reset();
         eprintln!("agent: {}: ESCALATING on turn {turn}, trigger {trigger:?}: {evidence}", self.id);
         let detected_ms = since.elapsed().as_millis() as u64;
         let escalation =
@@ -508,6 +722,18 @@ pub async fn check_in<L: Llm + 'static>(
         status: Status::Ok,
         reasons: Vec::new(),
         summary: String::new(),
+        generation: 0,
+        answering: None,
+        acked: false,
+        pauses: 0,
+        barge: BargeIn::default(),
+        paused: None,
+        pause_id: 0,
+        resumed: Vec::new(),
+        speaking_text: String::new(),
+        speaking_turn: None,
+        barge_ins: Vec::new(),
+        echo: EchoMeter::default(),
     };
     let mut history = vec![Message::new(Role::System, SYSTEM_PROMPT)];
     let mut segmenter = Segmenter::default();
@@ -517,6 +743,9 @@ pub async fn check_in<L: Llm + 'static>(
     let mut turn = TurnSoFar::default();
     let mut thinking: Thinking = None;
     let mut transfer: Option<JoinHandle<Result<String, Error>>> = None;
+    let (verdict_tx, mut verdict_rx) = mpsc::unbounded_channel::<Verdict>();
+    // The resident's latest audio, ending at the segmenter's clock, for Smart Turn.
+    let mut recent: VecDeque<f32> = VecDeque::with_capacity(RECENT_SAMPLES + WINDOW);
 
     let greeting = c.services.lines.greeting.clone();
     c.say(greeting, GREETING_INBOUND, After::Listen);
@@ -548,16 +777,53 @@ pub async fn check_in<L: Llm + 'static>(
                             break 'call EndedBy::AgentError;
                         }
                     };
-                    if thinking.is_some() || c.speaking.is_some() || c.escalation.is_some() {
+                    c.echo.window(&samples, p, c.talking());
+                    recent.extend(samples.iter().copied());
+                    let excess = recent.len().saturating_sub(RECENT_SAMPLES);
+                    recent.drain(..excess);
+                    // The escalation script always plays to the end, unheard.
+                    if c.escalation.is_some() {
+                        segmenter.skip(&window);
                         continue;
                     }
-                    if let Some(utterance) = segmenter.push(&window, p) {
+                    if c.speaking.is_some() {
+                        if !c.services.barge_in {
+                            segmenter.skip(&window);
+                            continue;
+                        }
+                        match c.barge.push(segmenter.now(), p) {
+                            Some(barge_in::Action::Pause) => c.pause(),
+                            Some(barge_in::Action::Confirm(why)) => c.yield_floor(why).await,
+                            Some(barge_in::Action::Resume) => {
+                                c.resume();
+                                // What was said over the agent isn't the resident's turn.
+                                segmenter.restart();
+                                turn = TurnSoFar { outstanding: turn.outstanding, ..TurnSoFar::default() };
+                            }
+                            None => {}
+                        }
+                        if c.talking() {
+                            segmenter.skip(&window);
+                            continue;
+                        }
+                    }
+                    // Listening, or paused for the resident: cut their speech into utterances.
+                    let was_open = segmenter.in_utterance();
+                    let utterance = segmenter.push(&window, p);
+                    if !was_open && segmenter.in_utterance() {
+                        turn.start = turn.start.or(segmenter.utterance_start());
+                        if c.can_take_back(&thinking, &turn) {
+                            c.take_back(&mut thinking, &mut turn);
+                        }
+                    }
+                    if let Some(utterance) = utterance {
                         // Frames arrive in real time, so the resident stopped this long before
                         // now (inferred, as in listen.rs).
                         let stopped = Instant::now()
                             - Duration::from_secs_f64(segmenter.now() - utterance.end);
                         turn.utterances += 1;
                         turn.outstanding += 1;
+                        let over = c.paused.map(|_| c.pause_id);
                         let (stt, heard) = (c.services.stt.clone(), heard_tx.clone());
                         tokio::spawn(async move {
                             // An agent fault only on the second failure (issue #11).
@@ -568,16 +834,17 @@ pub async fn check_in<L: Llm + 'static>(
                                 }
                                 ok => ok,
                             };
-                            let _ = heard.send(Heard { result, stopped });
+                            let _ = heard.send(Heard { result, stopped, over });
                         });
                     }
-                    if turn.ready(&segmenter) {
-                        thinking = c.respond(&mut turn, &mut history, &early_tx);
+                    c.consult(&mut turn, &segmenter, &recent, &verdict_tx);
+                    if turn.ready(&segmenter) && thinking.is_none() && c.speaking.is_none() {
+                        thinking = c.respond(&mut turn, &history, &early_tx);
                     }
                 }
             }
             Some(heard) = heard_rx.recv() => {
-                turn.outstanding -= 1;
+                turn.outstanding = turn.outstanding.saturating_sub(1);
                 if c.escalation.is_some() {
                     continue;
                 }
@@ -588,9 +855,29 @@ pub async fn check_in<L: Llm + 'static>(
                             eprintln!("agent: {}: heard only noise: {:?}", c.id, transcript.text);
                         } else {
                             c.heard(&transcript.text);
-                            turn.words.push(transcript.text.clone());
-                            turn.stopped = Some(heard.stopped);
-                            let so_far = turn.words.join(" ");
+                            // Said over the agent: enough words, or a keyword, take the turn,
+                            // even when they arrive after it played on.
+                            let confirms = heard.over.and(barge_in::confirms(&transcript.text));
+                            if let Some(why) = confirms.clone()
+                                && c.speaking.is_some()
+                            {
+                                c.yield_floor(why).await;
+                            }
+                            // Said in a pause the agent played on from: a backchannel, not the
+                            // resident's turn. The keyword rule still hears it.
+                            let own_turn = match heard.over {
+                                Some(pause) => confirms.is_some() || !c.resumed.contains(&pause),
+                                None => true,
+                            };
+                            if own_turn {
+                                turn.words.push(transcript.text.clone());
+                                turn.stopped = Some(heard.stopped);
+                                // A turn given words counts as spoken, even if the utterance
+                                // itself was cut before a resume reset the turn.
+                                turn.utterances = turn.utterances.max(1);
+                            }
+                            let so_far =
+                                if own_turn { turn.words.join(" ") } else { transcript.text.clone() };
                             if let Some(hit) = escalation::check(&transcript.text, &so_far) {
                                 let evidence = format!("{:?} in {so_far:?}", hit.phrase);
                                 let number = c.turns.len() + 1;
@@ -600,7 +887,8 @@ pub async fn check_in<L: Llm + 'static>(
                             }
                             // A yes to the offer of a person, checked here rather than left to
                             // the model, so it never waits on an LLM call.
-                            if c.checklist.last() == Some(Asking::OfferPerson)
+                            if own_turn
+                                && c.checklist.last() == Some(Asking::OfferPerson)
                                 && checklist::accepts_offer(&transcript.text)
                             {
                                 let evidence =
@@ -621,13 +909,35 @@ pub async fn check_in<L: Llm + 'static>(
                         continue;
                     }
                 }
-                if turn.ready(&segmenter) && thinking.is_none() {
-                    thinking = c.respond(&mut turn, &mut history, &early_tx);
+                if turn.ready(&segmenter) && thinking.is_none() && c.speaking.is_none() {
+                    thinking = c.respond(&mut turn, &history, &early_tx);
+                }
+            }
+            Some(verdict) = verdict_rx.recv() => {
+                // A verdict on a pause that has since ended is stale.
+                if turn.asked != Some(verdict.pause) {
+                    continue;
+                }
+                match verdict.result {
+                    Ok(v) => {
+                        turn.smart_turn_p.push(v.p);
+                        turn.hold = v.p < HOLD_BELOW;
+                        if turn.hold {
+                            eprintln!(
+                                "agent: {}: Smart Turn p = {:.3} ({} ms): holding the floor for up \
+                                 to {HOLD_TO} s",
+                                c.id,
+                                v.p,
+                                v.took.as_millis()
+                            );
+                        }
+                    }
+                    Err(e) => eprintln!("agent: {}: Smart Turn failed, not holding: {e}", c.id),
                 }
             }
             Some(early) = early_rx.recv() => {
-                // One from a turn dropped by an escalation is stale.
-                if thinking.is_some() && c.escalation.is_none() {
+                // One from a turn given back, or dropped by an escalation, is stale.
+                if thinking.is_some() && c.escalation.is_none() && early.generation == c.generation {
                     c.answer(early.reply, early.speech, &mut thinking).await;
                 }
             }
@@ -635,7 +945,7 @@ pub async fn check_in<L: Llm + 'static>(
                 thinking = None;
                 c.turn_deadline = None;
                 c.ack_at = None;
-                segmenter.restart();
+                c.answering = None;
                 let answer = match answer {
                     Ok((h, answer)) => {
                         history = h;
@@ -656,8 +966,10 @@ pub async fn check_in<L: Llm + 'static>(
                     Answer::Reply { reply, early: true, .. } => {
                         // `select!` may pick the finished task before its early message.
                         while let Ok(early) = early_rx.try_recv() {
-                            let mut none = None;
-                            c.answer(early.reply, early.speech, &mut none).await;
+                            if early.generation == c.generation {
+                                let mut none = None;
+                                c.answer(early.reply, early.speech, &mut none).await;
+                            }
                         }
                         c.finish(reply);
                     }
@@ -679,7 +991,15 @@ pub async fn check_in<L: Llm + 'static>(
                     && mark == end
                 {
                     c.speaking = None;
-                    segmenter.restart();
+                    c.speaking_turn = None;
+                    c.barge.reset();
+                    if c.paused.is_some() {
+                        // It ran out while paused: the resident is talking, so listen on.
+                        c.speaker.resume();
+                        c.end_pause("the agent had finished anyway".to_string());
+                    } else {
+                        segmenter.restart();
+                    }
                     match after {
                         After::Listen => c.silence = Some(Instant::now() + SILENCE_WAIT),
                         After::HangUp => {
@@ -778,11 +1098,30 @@ pub async fn check_in<L: Llm + 'static>(
         escalation: c.escalation.map(|(e, _)| e),
         concern_flag,
         ended_by,
+        barge_ins: c.barge_ins,
+        echo: c.echo.log(),
     };
+    let echo = &log.echo;
+    eprintln!(
+        "agent: {}: echo: the agent talked {:.1} s at {} dBFS; the line meanwhile {} dBFS \
+         (p50), {} (p95), VAD over threshold on {} of {} windows; quiet line {} dBFS",
+        log.call,
+        echo.agent_talking_s,
+        db(echo.agent_level_dbfs),
+        db(echo.line_while_talking_p50_dbfs),
+        db(echo.line_while_talking_p95_dbfs),
+        echo.vad_fires_while_talking,
+        echo.windows_while_talking,
+        db(echo.line_quiet_p50_dbfs),
+    );
     match call_log::write(&c.services.calls_dir, &log) {
         Ok(path) => eprintln!("agent: {}: call log written to {}", c.id, path.display()),
         Err(e) => eprintln!("agent: {}: couldn't write the call log: {e}", c.id),
     }
+}
+
+fn db(level: Option<f64>) -> String {
+    level.map_or("n/a".to_string(), |l| format!("{l:.1}"))
 }
 
 fn record_transfer<L>(c: &mut Call<L>, result: Result<Result<String, Error>, tokio::task::JoinError>) {
@@ -809,13 +1148,14 @@ async fn respond<L: Llm>(
     services: Services<L>,
     speaker: Speaker,
     early: mpsc::UnboundedSender<Early>,
+    generation: u64,
 ) -> (Vec<Message>, Answer) {
     let mut messages = history.clone();
     messages.push(Message::new(Role::User, format!("{heard}\n\n{note}")));
     let mut attempt = 0;
     loop {
         attempt += 1;
-        match answer(&messages, &services, &early).await {
+        match answer(&messages, &services, &early, generation).await {
             Ok((reply, speech, was_early)) => {
                 history.push(Message::new(Role::User, heard));
                 history.push(Message::new(Role::Assistant, reply.raw.clone()));
@@ -840,6 +1180,7 @@ async fn answer<L: Llm>(
     history: &[Message],
     services: &Services<L>,
     early: &mpsc::UnboundedSender<Early>,
+    generation: u64,
 ) -> Result<(Reply, Option<Speech>, bool), Error> {
     let (head_tx, head_rx) = oneshot::channel::<(Head, Duration)>();
     let whole = services.llm.turn_streaming(history, head_tx);
@@ -859,6 +1200,7 @@ async fn answer<L: Llm>(
     };
     let early_turn = head.clone().into_turn(String::new());
     let _ = early.send(Early {
+        generation,
         reply: Reply { turn: early_turn.clone(), raw: String::new(), took },
         speech,
     });

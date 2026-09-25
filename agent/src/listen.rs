@@ -72,6 +72,23 @@ impl Segmenter {
         self.open.is_some()
     }
 
+    /// When the open utterance started, in media time.
+    pub fn utterance_start(&self) -> Option<f64> {
+        self.open
+    }
+
+    /// Lets a window go by unheard, as while the agent talks (issue #19): the clock moves on,
+    /// and the window is kept as pre-roll, so an utterance that starts right after it still
+    /// has its first syllable.
+    pub fn skip(&mut self, window: &[i16]) {
+        self.t += WINDOW_S;
+        if self.open.is_none() {
+            self.buffer.extend_from_slice(window);
+            let excess = self.buffer.len().saturating_sub(PRE_ROLL_SAMPLES + WINDOW);
+            self.buffer.drain(..excess);
+        }
+    }
+
     /// Forgets any utterance in progress and starts afresh, keeping the clock.
     pub fn restart(&mut self) {
         *self = Segmenter { t: self.t, ..Segmenter::default() };
@@ -173,6 +190,16 @@ mod tests {
         // Pre-roll + speech + the gap, in whole windows.
         let expected = (u.end - u.start + PRE_ROLL + UTTERANCE_GAP) * CORE_RATE_HZ as f64;
         assert!((u.audio.len() as f64 - expected).abs() <= 2.0 * WINDOW as f64);
+    }
+
+    #[test]
+    fn a_skipped_window_moves_the_clock_and_serves_as_pre_roll() {
+        let mut s = Segmenter::default();
+        s.skip(&[7; WINDOW]);
+        assert!((s.now() - WINDOW_S).abs() < 1e-12);
+        feed(&mut s, windows(1.0), 0.9);
+        let out = feed(&mut s, windows(UTTERANCE_GAP) + 1, 0.0);
+        assert_eq!(out[0].audio[..WINDOW], [7; WINDOW]);
     }
 
     #[test]

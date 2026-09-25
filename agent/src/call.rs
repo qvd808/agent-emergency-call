@@ -9,9 +9,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::net::TcpStream;
+use turn::smart_turn::SmartTurn;
 use turn::vad::Silero;
 
 use crate::conversation::{Lines, Services, check_in};
+use crate::end_of_turn::EndOfTurn;
 use crate::llm::{Llm, Message, Ollama, Role, SYSTEM_PROMPT};
 use crate::stt::Stt;
 use crate::telephony::CallControl;
@@ -27,6 +29,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub const DEFAULT_WHISPER_MODEL: &str = "models/ggml-tiny.en.bin";
 pub const DEFAULT_VAD_MODEL: &str = "models/silero_vad.onnx";
 pub const DEFAULT_VOICE: &str = "models/en_US-hfc_female-medium.onnx";
+pub const DEFAULT_SMART_TURN_MODEL: &str = "models/smart-turn-v3.2-cpu.onnx";
 
 /// The same defaults as `.env.example`.
 const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
@@ -37,6 +40,11 @@ const DEFAULT_CALLS_DIR: &str = "calls";
 /// A setting from the environment. Empty counts as unset.
 pub fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
+}
+
+/// A switch that is on unless the environment turns it off.
+fn switched_off(name: &str) -> bool {
+    env(name).is_some_and(|v| matches!(v.to_lowercase().as_str(), "off" | "0" | "false" | "no"))
 }
 
 /// The LLM the environment names: Ollama at `OLLAMA_URL`, running `OLLAMA_MODEL`. Returns it
@@ -74,6 +82,23 @@ pub async fn start_services<L: Llm>(stt: Stt, llm: L, llm_name: &str) -> Result<
     eprintln!("agent: escalations transfer to extension {dispatcher}");
     let calls_dir = PathBuf::from(env("CALLS_DIR").unwrap_or_else(|| DEFAULT_CALLS_DIR.into()));
 
+    // Turn-taking (issue #19). Both are on unless `.env` turns them off, as a fallback for a
+    // line whose echo pauses the agent on its own voice.
+    let barge_in = !switched_off("BARGE_IN");
+    let end_of_turn = if switched_off("SMART_TURN") {
+        None
+    } else {
+        let model = env("SMART_TURN_MODEL").unwrap_or_else(|| DEFAULT_SMART_TURN_MODEL.to_string());
+        let smart_turn = SmartTurn::new(&model).map_err(|e| format!("{model}: {e}"))?;
+        eprintln!("agent: Smart Turn from {model} can hold the floor at a pause");
+        Some(EndOfTurn::start(smart_turn))
+    };
+    eprintln!(
+        "agent: barge-in {}, Smart Turn {}",
+        if barge_in { "on" } else { "off (BARGE_IN)" },
+        if end_of_turn.is_some() { "on" } else { "off (SMART_TURN)" }
+    );
+
     Ok(Services {
         stt,
         tts,
@@ -81,6 +106,8 @@ pub async fn start_services<L: Llm>(stt: Stt, llm: L, llm_name: &str) -> Result<
         lines: Arc::new(lines),
         dispatcher,
         calls_dir,
+        barge_in,
+        end_of_turn,
     })
 }
 

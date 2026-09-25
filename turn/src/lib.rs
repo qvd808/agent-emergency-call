@@ -3,6 +3,8 @@
 //! Shared by the turn-detection prototype harness and the live agent, so the parameters
 //! tuned in the prototype are the ones that ship (issue #25).
 
+pub mod barge_in;
+pub mod smart_turn;
 pub mod vad;
 
 /// Silero window at 16 kHz: 512 samples = 32 ms (Silero `utils_vad.py`, `OnnxWrapper.__call__`).

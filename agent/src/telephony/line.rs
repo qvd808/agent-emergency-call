@@ -180,6 +180,8 @@ where
                 Command::Play(audio) => outbox.play(audio),
                 Command::Mark(id) => outbox.mark(id),
                 Command::Clear(reply) => { let _ = reply.send(outbox.clear()); }
+                Command::Pause => outbox.paused = true,
+                Command::Resume => outbox.paused = false,
                 // Asterisk ends the AudioSocket() app, and the dialplan's next line hangs
                 // up (asterisk/config/extensions.conf, extension 3100).
                 Command::Hangup => {
@@ -274,6 +276,9 @@ struct Outbox {
     in_flight: VecDeque<(MarkId, usize)>,
     /// Ticks a sample spends inside the resampler before it reaches the line.
     delay_ticks: usize,
+    /// While paused, the line gets silence and the queue waits where it stopped (barge-in,
+    /// issue #19).
+    paused: bool,
 }
 
 impl Outbox {
@@ -286,6 +291,7 @@ impl Outbox {
             down,
             in_flight: VecDeque::new(),
             delay_ticks,
+            paused: false,
         }
     }
 
@@ -300,7 +306,9 @@ impl Outbox {
         self.queue.push_back(Queued::Mark(id));
     }
 
+    /// Drops everything queued, and ends a pause: what is queued next plays at once.
     fn clear(&mut self) -> Cleared {
+        self.paused = false;
         let dropped_marks = self
             .queue
             .drain(..)
@@ -318,8 +326,9 @@ impl Outbox {
     fn next_frame(&mut self) -> (Vec<i16>, Vec<MarkId>) {
         let mut input = Vec::with_capacity(CORE_FRAME);
         // Fill one frame of input. Marks met on the way are taken too, and so is any mark
-        // sitting right after the frame's last sample, so it isn't held back a tick.
-        loop {
+        // sitting right after the frame's last sample, so it isn't held back a tick. Paused,
+        // nothing is taken.
+        while !self.paused {
             match self.queue.front_mut() {
                 Some(Queued::Mark(id)) => {
                     self.in_flight.push_back((*id, self.delay_ticks));
@@ -441,6 +450,33 @@ mod tests {
         assert_eq!(all, vec![(delay, 1)]);
         // Only silence from here on, once the resampler has flushed.
         assert_eq!(outbox.next_frame().0, vec![0; LINE_FRAME]);
+    }
+
+    #[test]
+    fn a_pause_holds_the_audio_and_its_marks_where_they_stopped() {
+        let mut outbox = Outbox::new();
+        let delay = outbox.delay_ticks;
+        outbox.play(vec![1000; CORE_FRAME * 3]);
+        outbox.mark(1);
+        outbox.next_frame();
+        outbox.paused = true;
+        // Paused: silence once the resampler has flushed, and the mark waits.
+        let paused = drain(&mut outbox, 10);
+        assert!(paused.is_empty(), "{paused:?}");
+        assert_eq!(outbox.next_frame().0, vec![0; LINE_FRAME]);
+        assert_eq!(outbox.queued_samples, CORE_FRAME * 2);
+        // Resumed: the two frames left, then the mark after the resampler's delay.
+        outbox.paused = false;
+        assert_eq!(drain(&mut outbox, 10), vec![(1 + delay, 1)]);
+    }
+
+    #[test]
+    fn clearing_ends_a_pause() {
+        let mut outbox = Outbox::new();
+        outbox.play(vec![1000; CORE_FRAME]);
+        outbox.paused = true;
+        outbox.clear();
+        assert!(!outbox.paused);
     }
 
     #[test]

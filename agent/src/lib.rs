@@ -9,6 +9,7 @@ pub mod call;
 pub mod call_log;
 pub mod checklist;
 pub mod conversation;
+pub mod end_of_turn;
 pub mod escalation;
 pub mod listen;
 pub mod llm;

@@ -147,10 +147,19 @@ pub fn all() -> Vec<Persona> {
             expect: Expect::ByDesign { turn: 1 },
             failing_llm: false,
         },
-        // Talks over the agent's first reply.
+        // Talks over the agent's first reply, half a second in: mid-sentence.
         fine("barge_in", vec![
             Say("I'm fine, thank you."),
-            Interrupt(1.0, "Sorry, wait, can you say that again?"),
+            Interrupt(0.5, "Sorry, wait, can you say that again?"),
+            Say("No, no falls."),
+            Say("No pain."),
+            Say("Yes, I've eaten."),
+            Say("No, thank you."),
+        ]),
+        // Only says "yeah" over it: the agent should pause, then play on (issue #19).
+        fine("backchannel", vec![
+            Say("I'm fine, thank you."),
+            Interrupt(0.5, "Yeah."),
             Say("No, no falls."),
             Say("No pain."),
             Say("Yes, I've eaten."),
