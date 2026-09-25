@@ -15,7 +15,13 @@ recognition and turn-taking to a local LLM, speech synthesis, escalation and log
 ![LLM](https://img.shields.io/badge/LLM-local%2C_Ollama-green)
 ![Eval](https://img.shields.io/badge/eval-16_scripted_callers%2C_all_gates_pass-brightgreen)
 
-> **Demo video:** coming soon. [`docs/demo.md`](docs/demo.md) is the two-minute script it follows.
+[![A live call: the agent is talked over, takes the correction, and flags a concern](demo/first-iteration.jpg)](demo/first-iteration.mp4)
+
+**[Watch the first-iteration demo](demo/first-iteration.mp4)** (1:31, a live call from a softphone
+on the laptop, recorded 2026-09-25). The agent checks in, is talked over and takes a correction
+("Actually, I just remembered that I did have a fall"), and hangs up with a concern flag for the
+dispatcher. This take has no emergency; [`docs/demo.md`](docs/demo.md) is the full script, transfer
+included.
 
 ## Why this exists
 
@@ -212,6 +218,7 @@ agent/               the live-call agent: one Rust process for the whole call
 turn/                VAD, Smart Turn and the barge-in policy
 eval/                make eval: personas, the fake AudioSocket caller, the report
 asterisk/            Asterisk 22.11.0 Dockerfile and config
+demo/                the first-iteration demo video
 docs/                the demo script, research notes, and the knowledge base
 ```
 
