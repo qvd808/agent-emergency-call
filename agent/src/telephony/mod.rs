@@ -1,7 +1,7 @@
 //! The telephony seam (issue #13). The agent's core sees a call's audio only through [`Media`]
 //! and never sees AudioSocket, channel names or the line's format. Call control is
-//! [`CallControl`]: hanging up so far; placing and transferring calls land with outbound
-//! check-ins and escalation.
+//! [`CallControl`]: hanging up, and transferring to the dispatcher through AMI (issue #20);
+//! placing calls lands with outbound check-ins.
 //!
 //! Media is a plain handle of channels rather than a trait: an adapter builds one per call and
 //! runs its own task behind it. A Twilio adapter would build the same handle.
@@ -10,8 +10,11 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
 
+use ami::{Ami, Channel};
+
 use crate::audio::{CORE_FRAME, CORE_RATE_HZ};
 
+pub mod ami;
 pub mod audiosocket;
 pub mod line;
 
@@ -57,11 +60,36 @@ pub(crate) enum Command {
 #[derive(Clone)]
 pub struct CallControl {
     commands: mpsc::UnboundedSender<Command>,
+    /// The PBX side: AMI, and the UUID that finds this call's channel. `None` when AMI isn't
+    /// configured, and then a transfer fails.
+    pbx: Option<(Ami, String)>,
 }
+
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 impl CallControl {
     pub(crate) fn new(commands: mpsc::UnboundedSender<Command>) -> Self {
-        Self { commands }
+        Self { commands, pbx: None }
+    }
+
+    /// Lets this call be transferred through `ami`. `uuid` is the call's AudioSocket UUID.
+    pub fn with_ami(mut self, ami: Ami, uuid: String) -> Self {
+        self.pbx = Some((ami, uuid));
+        self
+    }
+
+    /// The call's channel on the PBX, with the caller's extension.
+    pub async fn channel(&self) -> Result<Channel, Error> {
+        let (ami, uuid) = self.pbx.as_ref().ok_or("AMI is not configured (.env, AMI_*)")?;
+        ami.find_channel(uuid).await
+    }
+
+    /// Transfers the live call to `extension`, an internal extension. Returns what the PBX
+    /// said; success means the call was handed off, not that anyone answered.
+    pub async fn transfer(&self, extension: &str) -> Result<String, Error> {
+        let (ami, _) = self.pbx.as_ref().ok_or("AMI is not configured (.env, AMI_*)")?;
+        let channel = self.channel().await?;
+        ami.redirect(&channel.name, extension).await
     }
 
     /// Hangs up at once, dropping any audio not yet written to the line. To let the last

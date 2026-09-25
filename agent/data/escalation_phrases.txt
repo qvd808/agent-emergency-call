@@ -1,0 +1,70 @@
+# The keyword rule's phrases (issue #11). Grow this list whenever the eval or a call finds a miss.
+#
+# Written in normalised form: lower case, no punctuation, no apostrophes, and "cant" / "im" /
+# "theres" / "wont" / "911" standing for every spelling of them (escalation.rs, `normalise`).
+#
+# [emergency]            the phrase anywhere, its words in order with at most 2 others between
+# [emergency, whole]     the whole utterance, so "can you help me with the shopping" doesn't fire
+# [asked for a person]   the phrase anywhere; every entry carries a verb of wanting, so "are you
+#                        a real person?" doesn't fire (the LLM answers that one)
+#
+# "I need help" is left out on purpose: it is the natural answer to "do you need anything?",
+# and that is a concern, not an emergency.
+
+[emergency]
+# Can't get up
+cant get up
+cant stand up
+im on the floor
+stuck on the floor
+lying on the floor
+# Breathing
+cant breathe
+hard to breathe
+struggling to breathe
+cant catch my breath
+# Chest
+chest pain
+chest hurts
+chest is tight
+pressure in my chest
+# Stroke signs
+cant move my
+cant feel my
+face is drooping
+cant talk properly
+# Bleeding
+bleeding badly
+wont stop bleeding
+lot of blood
+# Danger
+someone broke in
+someone is in my house
+theres a fire
+house is on fire
+smell gas
+smell smoke
+# Self-harm
+kill myself
+end my life
+want to die
+hurt myself
+# Asking for help
+call an ambulance
+call 911
+call nine one one
+
+[emergency, whole]
+help
+help me
+please help
+
+[asked for a person]
+talk to a person
+speak to a person
+talk to someone
+speak to someone
+talk to a human
+want a real person
+get me a person
+put me through
