@@ -19,9 +19,9 @@
 //! is told where it stands and what to ask next, and marks what the resident's words answered.
 //! A medical question gets the offer of a person; a yes to it escalates as asking for a person.
 //!
-//! To keep the wait short: the moment the resident's turn ends, a fixed acknowledgement plays
-//! ("Okay."), and the reply is spoken as soon as the model has written it, while the model is
-//! still writing the turn's summary ([`Head`]).
+//! To keep the wait short, the reply is spoken as soon as the model has written it, while the
+//! model is still writing the turn's summary ([`Head`]). If it still hasn't been queued
+//! [`ACK_AFTER`] after the resident stopped, a fixed acknowledgement ("Okay.") fills the wait.
 //!
 //! A first version, to be built on:
 //! - The resident's turn ends after [`TURN_END`] of silence, issue #12's base. Smart Turn's
@@ -64,6 +64,13 @@ const UNANSWERED_ESCALATES: u32 = 3;
 /// A turn still unanswered this long after the resident stopped is an agent fault (issue #11).
 const TURN_DEADLINE: Duration = Duration::from_secs(10);
 
+/// A reply not yet queued this long after the resident stopped, half the turn's deadline, gets
+/// an acknowledgement first (the maintainer's choice, 2026-09-25). Played on every turn, it came
+/// just before replies that were about to start anyway, and sounded out of place. On live calls
+/// replies started 2.6-3.9 s after the resident stopped (issue #18), so on turns like those it
+/// doesn't play.
+const ACK_AFTER: Duration = Duration::from_secs(TURN_DEADLINE.as_secs() / 2);
+
 /// Silence after the goodbye or the escalation script, before hanging up or transferring, so
 /// the phone has played the last word by the time the call leaves the agent. The mark only
 /// says the audio reached Asterisk; how much the phone still holds in its jitter buffer is
@@ -76,7 +83,7 @@ pub const GREETING_INBOUND: &str =
 pub const HOLDING: &str = "Sorry, give me a moment.";
 pub const ESCALATION: &str = "I'm connecting you to a person now. Please stay on the line. \
                               If you are in danger, call nine one one yourself as soon as you can.";
-/// Played the moment the resident's turn ends, taking turns, so the model's thinking time
+/// Played when a reply is slow ([`ACK_AFTER`]), taking turns, so the model's thinking time
 /// isn't dead air (the maintainer's choice, 2026-09-24). Both fit good news and bad.
 ///
 /// They must be words the voice says clearly on every take, since each is synthesised once
@@ -244,6 +251,10 @@ struct Call<L> {
     stopped: Instant,
     /// When the turn being answered becomes an agent fault.
     turn_deadline: Option<Instant>,
+    /// When the acknowledgement plays, unless the reply has been queued by then.
+    ack_at: Option<Instant>,
+    /// Acknowledgements played so far, so they take turns.
+    acks: usize,
     /// When the current prompt counts as unanswered.
     silence: Option<Instant>,
     unanswered: u32,
@@ -299,10 +310,6 @@ impl<L: Llm + 'static> Call<L> {
             return None;
         }
         let heard = turn.words.join(" ");
-        // The acknowledgement goes out at once, ahead of the reply.
-        let ack = self.turns.len() % ACKS.len();
-        self.speaker.play(self.services.lines.acks[ack].clone());
-        self.transcript.push(Line { speaker: Who::Agent, text: ACKS[ack].into(), at_s: self.at() });
         self.turns.push(TurnLog {
             turn: self.turns.len() + 1,
             heard: heard.clone(),
@@ -311,12 +318,31 @@ impl<L: Llm + 'static> Call<L> {
         });
         self.stopped = turn.stopped.unwrap_or_else(Instant::now);
         self.turn_deadline = Some(self.stopped + TURN_DEADLINE);
+        self.ack_at = Some(self.stopped + ACK_AFTER);
         self.silence = None;
         let history = std::mem::take(history);
         let note = self.checklist.note(checklist::wants_to_end(&heard));
         let (services, speaker, early) =
             (self.services.clone(), self.speaker.clone(), early.clone());
         Some(tokio::spawn(respond(history, heard, note, services, speaker, early)))
+    }
+
+    /// The reply is slow: fills the wait with an acknowledgement. The reply, once queued, plays
+    /// after it.
+    fn acknowledge(&mut self) {
+        let ack = self.acks % ACKS.len();
+        self.acks += 1;
+        self.speaker.play(self.services.lines.acks[ack].clone());
+        self.transcript.push(Line { speaker: Who::Agent, text: ACKS[ack].into(), at_s: self.at() });
+        if let Some(log) = self.turns.last_mut() {
+            log.acknowledged = true;
+        }
+        eprintln!(
+            "agent: {}: no reply {} ms after the resident stopped, said {:?}",
+            self.id,
+            self.stopped.elapsed().as_millis(),
+            ACKS[ack]
+        );
     }
 
     /// The summary of a turn already acted on as an [`Early`].
@@ -330,6 +356,8 @@ impl<L: Llm + 'static> Call<L> {
 
     /// Speaks the LLM's reply, or escalates if it says `emergency`.
     async fn answer(&mut self, mut reply: Reply, speech: Option<Speech>, thinking: &mut Thinking) {
+        // The reply is here: no acknowledgement needed.
+        self.ack_at = None;
         let turn = &mut reply.turn;
         // Two backstops for a goodbye without `end_call` (issue #35).
         let backstop =
@@ -414,6 +442,7 @@ impl<L: Llm + 'static> Call<L> {
             task.abort();
         }
         self.turn_deadline = None;
+        self.ack_at = None;
         self.first_audio = None;
         self.speaker.clear().await;
         eprintln!("agent: {}: ESCALATING on turn {turn}, trigger {trigger:?}: {evidence}", self.id);
@@ -460,6 +489,8 @@ pub async fn check_in<L: Llm + 'static>(
         first_audio: None,
         stopped: Instant::now(),
         turn_deadline: None,
+        ack_at: None,
+        acks: 0,
         silence: None,
         unanswered: 0,
         escalation: None,
@@ -485,7 +516,7 @@ pub async fn check_in<L: Llm + 'static>(
 
     let ended_by = 'call: loop {
         // Copied out, so the timers below don't borrow `c`.
-        let (silence, deadline) = (c.silence, c.turn_deadline);
+        let (silence, deadline, ack_at) = (c.silence, c.turn_deadline, c.ack_at);
         tokio::select! {
             frame = frames.recv() => {
                 let Some(frame) = frame else {
@@ -593,6 +624,7 @@ pub async fn check_in<L: Llm + 'static>(
             answer = async { thinking.as_mut().unwrap().await }, if thinking.is_some() => {
                 thinking = None;
                 c.turn_deadline = None;
+                c.ack_at = None;
                 segmenter.restart();
                 let answer = match answer {
                     Ok((h, answer)) => {
@@ -691,6 +723,12 @@ pub async fn check_in<L: Llm + 'static>(
                         TURN_DEADLINE.as_secs()
                     );
                     c.escalate(Trigger::AgentFault, evidence, number, stopped, &mut thinking).await;
+                }
+            }
+            _ = sleep_until(ack_at.unwrap_or_else(Instant::now).into()), if ack_at.is_some() => {
+                c.ack_at = None;
+                if thinking.is_some() && c.escalation.is_none() {
+                    c.acknowledge();
                 }
             }
             result = async { transfer.as_mut().unwrap().await }, if transfer.is_some() => {

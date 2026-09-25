@@ -82,6 +82,8 @@ pub struct TurnLog {
     /// Until the model had written the whole turn, summary included.
     pub llm_total_ms: Option<u64>,
     pub tts_ms: Option<u64>,
+    /// Whether the reply was slow enough that the acknowledgement played first (issue #45).
+    pub acknowledged: bool,
     /// Whether the resident spoke over the agent. Always false until barge-in (issue #19).
     pub interrupted: bool,
 }
