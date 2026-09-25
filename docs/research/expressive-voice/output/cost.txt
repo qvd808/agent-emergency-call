@@ -1,0 +1,5 @@
+stock    median  235.5 ms for 3.96 s of speech
+patched  median  238.1 ms for 3.96 s of speech
+stock    median  234.8 ms for 4.25 s of speech
+patched  median  233.0 ms for 4.25 s of speech
+Praat PSOLA stretch of one vowel, whole reply re-synthesised: median 22.4 ms

@@ -1,0 +1,26 @@
+espeak phonemes: ˈoʊ nˈoʊ, aɪm sˈɑːɹi tə hˈɪɹ ðˈæt.
+
+3 runs each, Steady tone (length 1.2, noise 0.6, noise_w 0.0), en_US-hfc_female-medium.onnx
+variant                            no ms       total ms no F0 med no F0 move st  how
+base                         279 (279-279)   1997 (  0)       175          -1.6  as espeak phonemizes it
+text-nooo                    325 (325-325)   2043 (  0)       199          -3.5  text "Oh nooo, I'm sorry to hear that." -> ˈoʊ nˈuːoʊ, aɪm sˈɑːɹi tə hˈɪɹ ðˈæt.
+text-noooo                   383 (383-383)   2148 (  0)       201          -2.6  text "Oh noooo, I'm sorry to hear that." -> ˈoʊ nˈuːuː, aɪm sˈɑːɹi tə hˈɪɹ ðˈæt.
+text-oh-comma-no             337 (337-337)   2136 (  0)       210          -0.7  text "Oh, no, I'm sorry to hear that." -> ˈoʊ, nˈoʊ, aɪm sˈɑːɹi tə hˈɪɹ ðˈæt.
+phonemes-nˈoːʊ               383 (383-383)   2136 (  0)       200          -2.3  phonemes, no = nˈoːʊ
+phonemes-nˈoʊː               383 (383-383)   2159 (  0)       200          +0.8  phonemes, no = nˈoʊː
+phonemes-nˈoːʊː              348 (348-348)   2043 (  0)       207          -2.3  phonemes, no = nˈoːʊː
+phonemes-nˈoʊoʊ              313 (313-313)   2101 (  0)       199          -3.7  phonemes, no = nˈoʊoʊ
+phonemes-nˈooʊ               255 (255-255)   2009 (  0)       186          -2.2  phonemes, no = nˈooʊ
+phonemes-nˈoːoːʊ             337 (337-337)   2090 (  0)       199          -5.6  phonemes, no = nˈoːoːʊ
+per-phoneme-vowel-x1.5       348 (348-348)   2067 (  0)       175          -4.2  per-phoneme length x1.5 on the vowel oʊ only (patched model)
+per-phoneme-vowel-x2.0       430 (430-430)   2148 (  0)       175          -0.6  per-phoneme length x2.0 on the vowel oʊ only (patched model)
+per-phoneme-vowel-x2.5       511 (511-511)   2229 (  0)       175          -0.0  per-phoneme length x2.5 on the vowel oʊ only (patched model)
+per-phoneme-word-x2.0        522 (522-522)   2241 (  0)       173          -0.1  per-phoneme length x2.0 on n and the vowel (patched model)
+hold-vowel-+13-frames        430 (430-430)   2148 (  0)       174          -5.2  vowel of no held 13 frames longer (+151 ms, patched model)
+hold-vowel-+20-frames        511 (511-511)   2229 (  0)       173          -1.4  vowel of no held 20 frames longer (+232 ms, patched model)
+clause-x1.5                  592 (592-592)   2601 (  0)       207          -0.1  "Oh no," synthesised alone at length_scale 1.2x1.5
+clause-x2.0                  789 (789-789)   2984 (  0)       202          +2.1  "Oh no," synthesised alone at length_scale 1.2x2.0
+sentence-oh-no               453 (453-453)   2499 (  0)       198          -1.1  "Oh no." as its own sentence at length_scale 1.2x1.0, 0.2 s, then the rest
+sentence-oh-no-x1.3          569 (569-569)   2719 (  0)       188          -0.6  "Oh no." as its own sentence at length_scale 1.2x1.3, 0.2 s, then the rest
+psola-vowel-x1.5             366 (366-366)   2084 (  0)       175          -2.1  base audio, vowel of no stretched x1.5 afterwards with PSOLA (Praat)
+psola-vowel-x2.0             454 (454-454)   2172 (  0)       175          -0.3  base audio, vowel of no stretched x2.0 afterwards with PSOLA (Praat)
