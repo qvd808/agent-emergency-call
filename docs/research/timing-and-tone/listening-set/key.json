@@ -1,0 +1,314 @@
+{
+ "sympathetic": [
+  {
+   "n": 1,
+   "text": "Oh no, I'm sorry to hear that. Are you hurt?",
+   "takes": {
+    "A": "own",
+    "B": "prudence",
+    "C": "poppy",
+    "D": "poppy-own-lead-in"
+   }
+  },
+  {
+   "n": 2,
+   "text": "Oh no, I'm sorry to hear that. Were you able to get up by yourself?",
+   "takes": {
+    "A": "poppy",
+    "B": "prudence",
+    "C": "poppy-own-lead-in",
+    "D": "own"
+   }
+  },
+  {
+   "n": 3,
+   "text": "I'm sorry, that sounds lonely. Do you have anyone to talk to this week?",
+   "takes": {
+    "A": "own",
+    "B": "prudence",
+    "C": "poppy",
+    "D": "poppy-own-lead-in"
+   }
+  },
+  {
+   "n": 4,
+   "text": "That sounds painful. Is your knee any better when you rest it?",
+   "takes": {
+    "A": "prudence",
+    "B": "own",
+    "C": "poppy",
+    "D": "poppy-own-lead-in"
+   }
+  },
+  {
+   "n": 5,
+   "text": "I'm sorry your sister is unwell. How are you holding up?",
+   "takes": {
+    "A": "prudence",
+    "B": "poppy",
+    "C": "own",
+    "D": "poppy-own-lead-in"
+   }
+  }
+ ],
+ "glad": [
+  {
+   "n": 1,
+   "text": "That's wonderful news, I'm so happy for you!",
+   "takes": {
+    "A": "own",
+    "B": "poppy",
+    "C": "prudence",
+    "D": "poppy-own-lead-in"
+   }
+  },
+  {
+   "n": 2,
+   "text": "Oh, how lovely that your granddaughter visited! What did you two do?",
+   "takes": {
+    "A": "poppy-own-lead-in",
+    "B": "prudence",
+    "C": "poppy",
+    "D": "own"
+   }
+  },
+  {
+   "n": 3,
+   "text": "A clear scan, that's great news! You must be so relieved.",
+   "takes": {
+    "A": "own",
+    "B": "poppy-own-lead-in",
+    "C": "poppy",
+    "D": "prudence"
+   }
+  },
+  {
+   "n": 4,
+   "text": "Well done on the walk, that's a long way! How do your legs feel?",
+   "takes": {
+    "A": "own",
+    "B": "poppy-own-lead-in",
+    "C": "prudence",
+    "D": "poppy"
+   }
+  },
+  {
+   "n": 5,
+   "text": "A new great-grandson, congratulations! What's his name?",
+   "takes": {
+    "A": "poppy-own-lead-in",
+    "B": "own",
+    "C": "prudence",
+    "D": "poppy"
+   }
+  }
+ ],
+ "reassuring": [
+  {
+   "n": 1,
+   "text": "Don't worry, you're not alone. Someone will check on you tonight.",
+   "takes": {
+    "A": "prudence",
+    "B": "poppy",
+    "C": "own",
+    "D": "poppy-own-lead-in"
+   }
+  },
+  {
+   "n": 2,
+   "text": "It's all right to feel nervous about the storm. Do you have a torch nearby?",
+   "takes": {
+    "A": "prudence",
+    "B": "poppy-own-lead-in",
+    "C": "poppy",
+    "D": "own"
+   }
+  },
+  {
+   "n": 3,
+   "text": "Waiting for results is hard. You're doing everything right.",
+   "takes": {
+    "A": "poppy",
+    "B": "own",
+    "C": "prudence",
+    "D": "poppy-own-lead-in"
+   }
+  },
+  {
+   "n": 4,
+   "text": "You did the right thing by telling me. Let's take it one step at a time.",
+   "takes": {
+    "A": "own",
+    "B": "poppy-own-lead-in",
+    "C": "prudence",
+    "D": "poppy"
+   }
+  },
+  {
+   "n": 5,
+   "text": "It's normal to feel shaky after a fall. Are you sitting down now?",
+   "takes": {
+    "A": "poppy",
+    "B": "prudence",
+    "C": "poppy-own-lead-in",
+    "D": "own"
+   }
+  }
+ ],
+ "serious": [
+  {
+   "n": 1,
+   "text": "Please stay where you are. I'm getting a person on the line now.",
+   "takes": {
+    "A": "poppy-own-lead-in",
+    "B": "prudence",
+    "C": "own",
+    "D": "poppy"
+   }
+  },
+  {
+   "n": 2,
+   "text": "I'm connecting you to a person now. Please stay on the line. If you are in danger, call nine one one yourself as soon as you can.",
+   "takes": {
+    "A": "prudence",
+    "B": "poppy",
+    "C": "poppy-own-lead-in",
+    "D": "own"
+   }
+  },
+  {
+   "n": 3,
+   "text": "I can't hear you. If you don't answer, I'll get a person on the line.",
+   "takes": {
+    "A": "poppy",
+    "B": "poppy-own-lead-in",
+    "C": "own",
+    "D": "prudence"
+   }
+  },
+  {
+   "n": 4,
+   "text": "Don't try to get up yet. Can you tell me where it hurts?",
+   "takes": {
+    "A": "own",
+    "B": "poppy-own-lead-in",
+    "C": "poppy",
+    "D": "prudence"
+   }
+  },
+  {
+   "n": 5,
+   "text": "Please stay still if your head hurts. Is anyone else in the house with you?",
+   "takes": {
+    "A": "poppy-own-lead-in",
+    "B": "poppy",
+    "C": "prudence",
+    "D": "own"
+   }
+  }
+ ],
+ "neutral": [
+  {
+   "n": 1,
+   "text": "Thanks. Did you have breakfast today?",
+   "takes": {
+    "A": "prudence",
+    "B": "poppy",
+    "C": "poppy-own-lead-in",
+    "D": "own"
+   }
+  },
+  {
+   "n": 2,
+   "text": "Hello. This is the automated check-in assistant. How are you feeling today?",
+   "takes": {
+    "A": "prudence",
+    "B": "poppy",
+    "C": "poppy-own-lead-in",
+    "D": "own"
+   }
+  },
+  {
+   "n": 3,
+   "text": "Okay, thank you. Have you had any pain today?",
+   "takes": {
+    "A": "own",
+    "B": "poppy",
+    "C": "prudence",
+    "D": "poppy-own-lead-in"
+   }
+  },
+  {
+   "n": 4,
+   "text": "Got it. Do you need anything right now?",
+   "takes": {
+    "A": "prudence",
+    "B": "poppy-own-lead-in",
+    "C": "own",
+    "D": "poppy"
+   }
+  },
+  {
+   "n": 5,
+   "text": "Thanks for letting me know. Have you taken your morning tablets?",
+   "takes": {
+    "A": "prudence",
+    "B": "poppy-own-lead-in",
+    "C": "poppy",
+    "D": "own"
+   }
+  }
+ ],
+ "playful": [
+  {
+   "n": 1,
+   "text": "Ha, a smoke alarm for a morning alarm. That's one way to wake up!",
+   "takes": {
+    "A": "poppy",
+    "B": "poppy-own-lead-in",
+    "C": "own",
+    "D": "prudence"
+   }
+  },
+  {
+   "n": 2,
+   "text": "The little thief! Did you get your slipper back?",
+   "takes": {
+    "A": "prudence",
+    "B": "poppy",
+    "C": "poppy-own-lead-in",
+    "D": "own"
+   }
+  },
+  {
+   "n": 3,
+   "text": "Soup-flavoured phone, that's a new one! Does it still work?",
+   "takes": {
+    "A": "poppy",
+    "B": "own",
+    "C": "poppy-own-lead-in",
+    "D": "prudence"
+   }
+  },
+  {
+   "n": 4,
+   "text": "She cheats, does she? Sounds like you need a rematch!",
+   "takes": {
+    "A": "poppy-own-lead-in",
+    "B": "prudence",
+    "C": "poppy",
+    "D": "own"
+   }
+  },
+  {
+   "n": 5,
+   "text": "Well, at least the toast is extra crispy. Did you have another go?",
+   "takes": {
+    "A": "poppy-own-lead-in",
+    "B": "prudence",
+    "C": "own",
+    "D": "poppy"
+   }
+  }
+ ]
+}
