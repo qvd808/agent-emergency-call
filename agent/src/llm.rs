@@ -161,6 +161,7 @@ pub struct Ollama {
     chat_url: String,
     model: String,
     schema: serde_json::Value,
+    temperature: Option<f32>,
 }
 
 impl Ollama {
@@ -170,11 +171,19 @@ impl Ollama {
             chat_url: format!("{}/api/chat", base_url.trim_end_matches('/')),
             model: model.to_string(),
             schema: turn_schema(),
+            temperature: None,
         }
     }
 
+    /// Samples at `temperature` instead of the model's own setting; 0 for the eval, so a run
+    /// can be repeated (issue #29). Sent as `options.temperature` (docs/api.md:520 at v0.20.7).
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
     fn request(&self, messages: &[Message], stream: bool) -> serde_json::Value {
-        serde_json::json!({
+        let mut request = serde_json::json!({
             "model": self.model,
             "messages": messages,
             "stream": stream,
@@ -183,7 +192,11 @@ impl Ollama {
             // Keeps the model loaded between calls; Ollama's default unloads it after 5 min
             // (docs/api.md:522 at v0.20.7), and reloading would slow the next first turn (inferred).
             "keep_alive": "1h",
-        })
+        });
+        if let Some(temperature) = self.temperature {
+            request["options"] = serde_json::json!({ "temperature": temperature });
+        }
+        request
     }
 }
 

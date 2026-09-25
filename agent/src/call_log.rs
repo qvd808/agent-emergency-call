@@ -22,6 +22,9 @@ pub struct CallLog {
     /// Everything said, by both sides, in order.
     pub transcript: Vec<Line>,
     pub turns: Vec<TurnLog>,
+    /// When the agent decided a turn was over but speech to text had heard only noise in it,
+    /// in seconds since the call started. Nothing was answered; the agent listened on.
+    pub unheard_turns_at_s: Vec<f64>,
     /// Where each item of the check-in ended up (issue #35).
     pub checklist: Checklist,
     /// The highest status any turn reached: it only ever rises (issue #11).
@@ -73,6 +76,11 @@ pub struct TurnLog {
     /// What the reply asked about.
     pub asking: Option<Asking>,
     pub end_call: bool,
+    /// When the agent decided the resident's turn was over, in seconds since the call started.
+    pub taken_at_s: f64,
+    /// From the end of the resident's speech to that decision: the end-of-turn wait, plus any
+    /// wait for the last transcript.
+    pub end_of_turn_ms: u64,
     /// From the end of the resident's speech to the first frame of the reply going out.
     pub latency_ms: Option<u64>,
     /// Speech to text for the turn's utterances, added up.

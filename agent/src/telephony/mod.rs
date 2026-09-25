@@ -60,36 +60,76 @@ pub(crate) enum Command {
 #[derive(Clone)]
 pub struct CallControl {
     commands: mpsc::UnboundedSender<Command>,
-    /// The PBX side: AMI, and the UUID that finds this call's channel. `None` when AMI isn't
-    /// configured, and then a transfer fails.
-    pbx: Option<(Ami, String)>,
+    pbx: Pbx,
+}
+
+/// The PBX side of Call control: what finds the call's channel and transfers it.
+#[derive(Clone)]
+enum Pbx {
+    /// AMI isn't configured, so a transfer fails.
+    None,
+    /// Asterisk's manager interface, and the call's AudioSocket UUID, which finds its channel.
+    Ami(Ami, String),
+    /// The eval's stand-in for Asterisk.
+    Recorder(Recorder),
+}
+
+/// Stands in for the PBX in the eval (issue #23): the caller's extension is known up front, and
+/// each transfer is handed to whoever plays Asterisk, which ends the call's AudioSocket as
+/// Asterisk does after a `Redirect`.
+#[derive(Clone)]
+pub struct Recorder {
+    pub caller: String,
+    pub transfers: mpsc::UnboundedSender<String>,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
+const NO_AMI: &str = "AMI is not configured (.env, AMI_*)";
+
 impl CallControl {
     pub(crate) fn new(commands: mpsc::UnboundedSender<Command>) -> Self {
-        Self { commands, pbx: None }
+        Self { commands, pbx: Pbx::None }
     }
 
     /// Lets this call be transferred through `ami`. `uuid` is the call's AudioSocket UUID.
     pub fn with_ami(mut self, ami: Ami, uuid: String) -> Self {
-        self.pbx = Some((ami, uuid));
+        self.pbx = Pbx::Ami(ami, uuid);
+        self
+    }
+
+    /// Hands this call's transfers to `recorder` instead of a PBX.
+    pub fn with_recorder(mut self, recorder: Recorder) -> Self {
+        self.pbx = Pbx::Recorder(recorder);
         self
     }
 
     /// The call's channel on the PBX, with the caller's extension.
     pub async fn channel(&self) -> Result<Channel, Error> {
-        let (ami, uuid) = self.pbx.as_ref().ok_or("AMI is not configured (.env, AMI_*)")?;
-        ami.find_channel(uuid).await
+        match &self.pbx {
+            Pbx::None => Err(NO_AMI.into()),
+            Pbx::Ami(ami, uuid) => ami.find_channel(uuid).await,
+            Pbx::Recorder(recorder) => Ok(Channel {
+                name: "eval".to_string(),
+                caller: Some(recorder.caller.clone()),
+            }),
+        }
     }
 
     /// Transfers the live call to `extension`, an internal extension. Returns what the PBX
     /// said; success means the call was handed off, not that anyone answered.
     pub async fn transfer(&self, extension: &str) -> Result<String, Error> {
-        let (ami, _) = self.pbx.as_ref().ok_or("AMI is not configured (.env, AMI_*)")?;
-        let channel = self.channel().await?;
-        ami.redirect(&channel.name, extension).await
+        match &self.pbx {
+            Pbx::None => Err(NO_AMI.into()),
+            Pbx::Ami(ami, _) => {
+                let channel = self.channel().await?;
+                ami.redirect(&channel.name, extension).await
+            }
+            Pbx::Recorder(recorder) => {
+                recorder.transfers.send(extension.to_string())?;
+                Ok("recorded by the eval".to_string())
+            }
+        }
     }
 
     /// Hangs up at once, dropping any audio not yet written to the line. To let the last

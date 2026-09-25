@@ -262,6 +262,7 @@ struct Call<L> {
     escalation: Option<(Escalation, Instant)>,
     transcript: Vec<Line>,
     turns: Vec<TurnLog>,
+    unheard_turns_at_s: Vec<f64>,
     checklist: Checklist,
     status: Status,
     reasons: Vec<String>,
@@ -307,16 +308,22 @@ impl<L: Llm + 'static> Call<L> {
     ) -> Thinking {
         let turn = std::mem::take(turn);
         if turn.words.is_empty() {
+            if turn.utterances > 0 {
+                eprintln!("agent: {}: the turn held nothing intelligible; listening on", self.id);
+                self.unheard_turns_at_s.push(self.at());
+            }
             return None;
         }
         let heard = turn.words.join(" ");
+        self.stopped = turn.stopped.unwrap_or_else(Instant::now);
         self.turns.push(TurnLog {
             turn: self.turns.len() + 1,
             heard: heard.clone(),
+            taken_at_s: self.at(),
+            end_of_turn_ms: self.stopped.elapsed().as_millis() as u64,
             stt_ms: turn.stt_ms,
             ..TurnLog::default()
         });
-        self.stopped = turn.stopped.unwrap_or_else(Instant::now);
         self.turn_deadline = Some(self.stopped + TURN_DEADLINE);
         self.ack_at = Some(self.stopped + ACK_AFTER);
         self.silence = None;
@@ -496,6 +503,7 @@ pub async fn check_in<L: Llm + 'static>(
         escalation: None,
         transcript: Vec::new(),
         turns: Vec::new(),
+        unheard_turns_at_s: Vec::new(),
         checklist: Checklist::default(),
         status: Status::Ok,
         reasons: Vec::new(),
@@ -576,7 +584,9 @@ pub async fn check_in<L: Llm + 'static>(
                 match heard.result {
                     Ok(transcript) => {
                         turn.stt_ms += transcript.took.as_millis() as u64;
-                        if !is_noise(&transcript.text) {
+                        if is_noise(&transcript.text) {
+                            eprintln!("agent: {}: heard only noise: {:?}", c.id, transcript.text);
+                        } else {
                             c.heard(&transcript.text);
                             turn.words.push(transcript.text.clone());
                             turn.stopped = Some(heard.stopped);
@@ -761,6 +771,7 @@ pub async fn check_in<L: Llm + 'static>(
         duration_s: c.at(),
         transcript: c.transcript,
         turns: c.turns,
+        unheard_turns_at_s: c.unheard_turns_at_s,
         checklist: c.checklist,
         final_status: c.status,
         summary: c.summary,

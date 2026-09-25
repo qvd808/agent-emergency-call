@@ -117,6 +117,12 @@ impl Decoder {
         Self::default()
     }
 
+    /// A decoder for Asterisk's end of the socket, reading what the agent sends, where no UUID
+    /// comes first. Only a client standing in for Asterisk, such as the eval's, needs it.
+    pub fn from_agent() -> Self {
+        Self { buf: Vec::new(), seen_uuid: true }
+    }
+
     pub fn push(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
     }

@@ -294,6 +294,9 @@ name = "eval"
 version = "0.1.0"
 dependencies = [
  "agent",
+ "dotenvy",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

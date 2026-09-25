@@ -10,36 +10,27 @@
 //!
 //! Settings come from the environment, and from `.env` for anything the environment doesn't set.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 use std::time::Instant;
 
 use agent::audio::{CORE_RATE_HZ, resample_clip};
-use agent::conversation::{Lines, Services, check_in};
+use agent::call::{
+    DEFAULT_VAD_MODEL, DEFAULT_WHISPER_MODEL, answer, env, log_stats, ollama_from_env,
+    start_services,
+};
+use agent::conversation::Services;
 use agent::listen::listen;
-use agent::llm::{Llm, Message, Ollama, Role, SYSTEM_PROMPT};
+use agent::llm::Ollama;
 use agent::stt::{Stt, Whisper};
-use agent::telephony::ami::{Ami, check_extension};
+use agent::telephony::ami::Ami;
 use agent::telephony::{core_duration, line};
-use agent::tts::{Tts, Voice};
 use tokio::net::{TcpListener, TcpStream};
 use turn::vad::Silero;
 
 /// Must match the port in `asterisk/config/extensions.conf`, extension 3100.
 const DEFAULT_LISTEN: &str = "127.0.0.1:9092";
 
-/// Where `make models` puts them. `tiny.en` is the fastest of `tiny.en`, `base.en` and
-/// `small.en` on this laptop's CPU, and the only one inside the 1 s budget (issue #17).
-const DEFAULT_WHISPER_MODEL: &str = "models/ggml-tiny.en.bin";
-const DEFAULT_VAD_MODEL: &str = "models/silero_vad.onnx";
-const DEFAULT_VOICE: &str = "models/en_US-hfc_female-medium.onnx";
-
-/// The same defaults as `.env.example`.
-const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
-const DEFAULT_OLLAMA_MODEL: &str = "qwen3:4b-instruct-2507-q4_K_M";
 const DEFAULT_AMI_PORT: &str = "5038";
-const DEFAULT_DISPATCHER: &str = "2000";
-const DEFAULT_CALLS_DIR: &str = "calls";
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -69,7 +60,10 @@ async fn main() -> Result<(), Error> {
     let ami = ami_from_env().await;
     let services = match clip {
         Some(_) => None,
-        None => Some(start_services(stt.clone()).await?),
+        None => {
+            let (llm, name) = ollama_from_env();
+            Some(start_services(stt.clone(), llm, &name).await?)
+        }
     };
 
     let listener = TcpListener::bind(&listen).await?;
@@ -84,46 +78,6 @@ async fn main() -> Result<(), Error> {
             }
         });
     }
-}
-
-/// Loads the voice and the fixed lines, and checks the LLM answers, before any call.
-async fn start_services(stt: Stt) -> Result<Services<Ollama>, Error> {
-    let voice_model = env("PIPER_VOICE").unwrap_or_else(|| DEFAULT_VOICE.to_string());
-    let voice = Voice::load(&voice_model).map_err(|e| format!("{voice_model}: {e}"))?;
-    let tts = Tts::start(voice);
-    let started = Instant::now();
-    let lines = Lines::synthesise(&tts).await?;
-    eprintln!(
-        "agent: speaking with {voice_model} (fixed lines in {} ms)",
-        started.elapsed().as_millis()
-    );
-
-    let url = env("OLLAMA_URL").unwrap_or_else(|| DEFAULT_OLLAMA_URL.to_string());
-    let model = env("OLLAMA_MODEL").unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string());
-    let llm = Ollama::new(&url, &model);
-    // Also loads the model into memory, so the first call's first turn doesn't wait for it.
-    let probe = [
-        Message::new(Role::System, SYSTEM_PROMPT),
-        Message::new(Role::User, "I'm fine, thank you."),
-    ];
-    let reply = llm.turn(&probe).await.map_err(|e| format!("{model} at {url}: {e}"))?;
-    eprintln!("agent: thinking with {model} (warm-up turn in {} ms)", reply.took.as_millis());
-
-    // A transfer only ever goes to an internal extension (the safety rules), checked before
-    // any call rather than at the moment of an emergency.
-    let dispatcher = env("DISPATCHER_EXTENSION").unwrap_or_else(|| DEFAULT_DISPATCHER.to_string());
-    check_extension(&dispatcher).map_err(|e| format!("DISPATCHER_EXTENSION: {e}"))?;
-    eprintln!("agent: escalations transfer to extension {dispatcher}");
-    let calls_dir = PathBuf::from(env("CALLS_DIR").unwrap_or_else(|| DEFAULT_CALLS_DIR.into()));
-
-    Ok(Services {
-        stt,
-        tts,
-        llm: Arc::new(llm),
-        lines: Arc::new(lines),
-        dispatcher,
-        calls_dir,
-    })
 }
 
 /// AMI, if `.env` configures it, after checking it logs in. Without it the check-in still runs,
@@ -151,10 +105,6 @@ async fn ami_from_env() -> Option<Ami> {
     Some(ami)
 }
 
-fn env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|v| !v.is_empty())
-}
-
 async fn call(
     stream: TcpStream,
     clip: Option<Vec<i16>>,
@@ -163,44 +113,29 @@ async fn call(
     vad_model: &str,
     ami: Option<Ami>,
 ) -> Result<(), Error> {
-    // Asterisk sets TCP_NODELAY on its side (issue #4). Setting it here too sends each
-    // 323-byte frame at once instead of letting the kernel hold it back to batch it.
-    stream.set_nodelay(true)?;
-    // Each call gets its own VAD: Silero carries state from one window to the next.
-    let vad = Silero::new(vad_model)?;
-    let (uuid, media, control, line) = line::accept(stream).await?;
-    eprintln!("agent: call started, UUID {uuid}");
-    let control = match ami {
-        Some(ami) => control.with_ami(ami, uuid.to_string()),
-        None => control,
-    };
-
-    let started = Instant::now();
-    match (clip, services) {
-        (_, Some(services)) => check_in(uuid.to_string(), media, control, vad, services).await,
-        (clip, None) => {
-            if let Some(clip) = clip {
-                media.speaker.play(clip);
-            }
-            // Keeps the speaker alive, so the line goes on sending silence, until the call ends.
-            let _speaker = media.speaker;
-            listen(uuid.to_string(), media.frames, vad, stt).await;
-        }
+    if let Some(services) = services {
+        answer(stream, vad_model, services, |control, uuid| match ami {
+            Some(ami) => control.with_ami(ami, uuid.to_string()),
+            None => control,
+        })
+        .await?;
+        return Ok(());
     }
 
+    // The audio harness: play the clip, then transcribe whatever the resident says.
+    stream.set_nodelay(true)?;
+    let vad = Silero::new(vad_model)?;
+    let (uuid, media, _control, line) = line::accept(stream).await?;
+    eprintln!("agent: call started, UUID {uuid}");
+    let started = Instant::now();
+    if let Some(clip) = clip {
+        media.speaker.play(clip);
+    }
+    // Keeps the speaker alive, so the line goes on sending silence, until the call ends.
+    let _speaker = media.speaker;
+    listen(uuid.to_string(), media.frames, vad, stt).await;
     let stats = line.await??;
-    let gap = |g: Option<std::time::Duration>| g.map_or("n/a".into(), |g| format!("{g:.1?}"));
-    eprintln!(
-        "agent: call ended, UUID {uuid}, {:.1} s: {} frames in ({} filled with silence), {} out \
-         (gaps between writes {} to {}), {} dropped",
-        started.elapsed().as_secs_f64(),
-        stats.frames_in,
-        stats.frames_filled,
-        stats.frames_out,
-        gap(stats.min_write_gap),
-        gap(stats.max_write_gap),
-        stats.frames_dropped + stats.dropped_messages,
-    );
+    log_stats(&uuid, started.elapsed(), &stats);
     Ok(())
 }
 

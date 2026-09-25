@@ -100,23 +100,37 @@ impl Voice {
 
     /// The phonemes of each sentence, with every clause's punctuation kept.
     fn phonemize(&self, text: &str) -> Result<Vec<String>, Error> {
-        let mut sentences = Vec::new();
-        let mut sentence = String::new();
+        let mut phonemized = Vec::new();
         for (words, mark) in clauses(text) {
             let phonemes = espeak_rs::text_to_phonemes(&words, &self.language, None)?.join(" ");
-            if phonemes.trim().is_empty() {
-                continue;
-            }
-            sentence.push_str(phonemes.trim());
-            sentence.push(mark);
-            if matches!(mark, '.' | '?' | '!') {
-                sentences.push(std::mem::take(&mut sentence));
-            } else {
-                sentence.push(' ');
-            }
+            phonemized.push((phonemes, mark));
         }
-        Ok(sentences)
+        Ok(sentences(phonemized))
     }
+}
+
+/// Groups each clause's phonemes, with its mark, into sentences. Text that stops on a clause
+/// mark, such as "Well," still makes a sentence: before, it was dropped, so "Well," came out as
+/// no audio at all (found by the eval, issue #23).
+fn sentences(clauses: Vec<(String, char)>) -> Vec<String> {
+    let mut sentences = Vec::new();
+    let mut sentence = String::new();
+    for (phonemes, mark) in clauses {
+        if phonemes.trim().is_empty() {
+            continue;
+        }
+        sentence.push_str(phonemes.trim());
+        sentence.push(mark);
+        if matches!(mark, '.' | '?' | '!') {
+            sentences.push(std::mem::take(&mut sentence));
+        } else {
+            sentence.push(' ');
+        }
+    }
+    if !sentence.trim().is_empty() {
+        sentences.push(sentence.trim_end().to_string());
+    }
+    sentences
 }
 
 /// Splits text into clauses, each with the mark that ends it: `.`, `?` and `!` end a sentence,
@@ -203,6 +217,25 @@ mod tests {
     #[test]
     fn a_run_of_marks_counts_once() {
         assert_eq!(clauses("Oh no... I see!?"), owned(&[("Oh no", '.'), ("I see", '!')]));
+    }
+
+    fn phonemized(clauses: &[(&str, char)]) -> Vec<(String, char)> {
+        owned(clauses)
+    }
+
+    #[test]
+    fn clauses_group_into_sentences() {
+        assert_eq!(
+            sentences(phonemized(&[("oʊ nˈoʊ", ','), ("aɪ sˈiː", '.'), ("ɑːɹ juː", '?')])),
+            ["oʊ nˈoʊ, aɪ sˈiː.", "ɑːɹ juː?"]
+        );
+    }
+
+    #[test]
+    fn text_that_stops_on_a_comma_is_still_spoken() {
+        assert_eq!(sentences(phonemized(&[("wˈɛl", ',')])), ["wˈɛl,"]);
+        assert_eq!(sentences(phonemized(&[("jˈɛs", ','), ("aɪ hˈæd", ','), ("ʌm", ',')])), ["jˈɛs, aɪ hˈæd, ʌm,"]);
+        assert_eq!(sentences(phonemized(&[("", ',')])), Vec::<String>::new());
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! path as a real call (issue #25).
 
 pub mod audio;
+pub mod call;
 pub mod call_log;
 pub mod checklist;
 pub mod conversation;

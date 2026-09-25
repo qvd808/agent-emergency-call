@@ -76,5 +76,11 @@ agent-test-wav: test-wav espeak-data ## Run the agent: each call plays the test 
 test: ## Run the Rust tests
 	cargo test --workspace
 
-eval: ## Stream the scripted residents through the fake client and print the results table
-	cargo run -p eval
+# Every call runs in real time, so a full run takes about a quarter of an hour. The table goes
+# to the terminal and to calls/eval/<run>/report.md, the agent's own log to calls/eval/agent.log.
+# `make eval REPEAT=3` is the sign-off run (issue #29); `PERSONA=doing_fine,barge_in` runs only
+# those. Ollama must be running, as for `make agent`. Exits non-zero if a gate fails.
+eval: espeak-data ## Call the agent with scripted residents and print the results table
+	mkdir -p calls/eval
+	cargo build --release -p eval
+	REPEAT=$(REPEAT) PERSONA=$(PERSONA) target/release/eval 2> calls/eval/agent.log
