@@ -1,2 +1,3 @@
-# Holds the SIP passwords; written by asterisk/configure.sh. Never commit it.
+# Holds the SIP passwords and the AMI secret; written by asterisk/configure.sh. Never commit them.
 pjsip_generated.conf
+manager_generated.conf

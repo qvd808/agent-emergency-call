@@ -7,8 +7,10 @@
 //! Asterisk connects to us: the dialplan's `AudioSocket()` dials `host.docker.internal:9092`,
 //! which reaches this process on `127.0.0.1` (issue #27). Only loopback, so nothing on the
 //! Wi-Fi can reach the agent.
+//!
+//! Settings come from the environment, and from `.env` for anything the environment doesn't set.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -17,6 +19,7 @@ use agent::conversation::{Lines, Services, check_in};
 use agent::listen::listen;
 use agent::llm::{Llm, Message, Ollama, Role, SYSTEM_PROMPT};
 use agent::stt::{Stt, Whisper};
+use agent::telephony::ami::{Ami, check_extension};
 use agent::telephony::{core_duration, line};
 use agent::tts::{Tts, Voice};
 use tokio::net::{TcpListener, TcpStream};
@@ -29,16 +32,22 @@ const DEFAULT_LISTEN: &str = "127.0.0.1:9092";
 /// `small.en` on this laptop's CPU, and the only one inside the 1 s budget (issue #17).
 const DEFAULT_WHISPER_MODEL: &str = "models/ggml-tiny.en.bin";
 const DEFAULT_VAD_MODEL: &str = "models/silero_vad.onnx";
-const DEFAULT_VOICE: &str = "models/en_US-lessac-medium.onnx";
+const DEFAULT_VOICE: &str = "models/en_US-hfc_female-medium.onnx";
 
 /// The same defaults as `.env.example`.
 const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL: &str = "qwen3:4b-instruct-2507-q4_K_M";
+const DEFAULT_AMI_PORT: &str = "5038";
+const DEFAULT_DISPATCHER: &str = "2000";
+const DEFAULT_CALLS_DIR: &str = "calls";
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    if dotenvy::dotenv().is_ok() {
+        eprintln!("agent: read settings from .env");
+    }
     let listen = env("AUDIOSOCKET_LISTEN").unwrap_or_else(|| DEFAULT_LISTEN.to_string());
     let clip = match env("TEST_WAV") {
         Some(path) => {
@@ -57,6 +66,7 @@ async fn main() -> Result<(), Error> {
     let stt = Stt::start(whisper);
     eprintln!("agent: transcribing with {whisper_model}");
 
+    let ami = ami_from_env().await;
     let services = match clip {
         Some(_) => None,
         None => Some(start_services(stt.clone()).await?),
@@ -66,10 +76,10 @@ async fn main() -> Result<(), Error> {
     eprintln!("agent: listening for AudioSocket on {listen}");
     loop {
         let (stream, peer) = listener.accept().await?;
-        let (clip, stt, services, vad_model) =
-            (clip.clone(), stt.clone(), services.clone(), vad_model.clone());
+        let (clip, stt, services, vad_model, ami) =
+            (clip.clone(), stt.clone(), services.clone(), vad_model.clone(), ami.clone());
         tokio::spawn(async move {
-            if let Err(e) = call(stream, clip, stt, services, &vad_model).await {
+            if let Err(e) = call(stream, clip, stt, services, &vad_model, ami).await {
                 eprintln!("agent: {peer}: call failed: {e}");
             }
         });
@@ -99,7 +109,46 @@ async fn start_services(stt: Stt) -> Result<Services<Ollama>, Error> {
     let reply = llm.turn(&probe).await.map_err(|e| format!("{model} at {url}: {e}"))?;
     eprintln!("agent: thinking with {model} (warm-up turn in {} ms)", reply.took.as_millis());
 
-    Ok(Services { stt, tts, llm: Arc::new(llm), lines: Arc::new(lines) })
+    // A transfer only ever goes to an internal extension (the safety rules), checked before
+    // any call rather than at the moment of an emergency.
+    let dispatcher = env("DISPATCHER_EXTENSION").unwrap_or_else(|| DEFAULT_DISPATCHER.to_string());
+    check_extension(&dispatcher).map_err(|e| format!("DISPATCHER_EXTENSION: {e}"))?;
+    eprintln!("agent: escalations transfer to extension {dispatcher}");
+    let calls_dir = PathBuf::from(env("CALLS_DIR").unwrap_or_else(|| DEFAULT_CALLS_DIR.into()));
+
+    Ok(Services {
+        stt,
+        tts,
+        llm: Arc::new(llm),
+        lines: Arc::new(lines),
+        dispatcher,
+        calls_dir,
+    })
+}
+
+/// AMI, if `.env` configures it, after checking it logs in. Without it the check-in still runs,
+/// but an escalation can only speak its script: the transfer fails.
+async fn ami_from_env() -> Option<Ami> {
+    let (Some(host), Some(username), Some(secret)) =
+        (env("AMI_HOST"), env("AMI_USERNAME"), env("AMI_SECRET"))
+    else {
+        eprintln!(
+            "agent: WARNING: AMI is not configured (AMI_HOST, AMI_USERNAME, AMI_SECRET in .env), \
+             so escalations cannot transfer calls. `make asterisk-up` writes them."
+        );
+        return None;
+    };
+    let port = env("AMI_PORT").unwrap_or_else(|| DEFAULT_AMI_PORT.to_string());
+    let ami = Ami { addr: format!("{host}:{port}"), username, secret };
+    match ami.check().await {
+        Ok(()) => eprintln!("agent: AMI logged in at {}", ami.addr),
+        Err(e) => eprintln!(
+            "agent: WARNING: AMI at {} failed ({e}), so escalations cannot transfer calls \
+             until it works. Is Asterisk up (`make asterisk-up`)?",
+            ami.addr
+        ),
+    }
+    Some(ami)
 }
 
 fn env(name: &str) -> Option<String> {
@@ -112,6 +161,7 @@ async fn call(
     stt: Stt,
     services: Option<Services<Ollama>>,
     vad_model: &str,
+    ami: Option<Ami>,
 ) -> Result<(), Error> {
     // Asterisk sets TCP_NODELAY on its side (issue #4). Setting it here too sends each
     // 323-byte frame at once instead of letting the kernel hold it back to batch it.
@@ -120,6 +170,10 @@ async fn call(
     let vad = Silero::new(vad_model)?;
     let (uuid, media, control, line) = line::accept(stream).await?;
     eprintln!("agent: call started, UUID {uuid}");
+    let control = match ami {
+        Some(ami) => control.with_ami(ami, uuid.to_string()),
+        None => control,
+    };
 
     let started = Instant::now();
     match (clip, services) {

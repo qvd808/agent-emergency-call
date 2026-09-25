@@ -9,8 +9,9 @@ services:
       - "5060:5060/udp"
       # Must match rtpstart/rtpend in asterisk/config/rtp.conf.
       - "10000-10099:10000-10099/udp"
-      # AMI goes on 127.0.0.1:5038 only (issue #27), added by the task that writes
-      # manager.conf.
+      # AMI, for the agent's transfers (issue #20): on the laptop's loopback only, never on
+      # the Wi-Fi (issue #27). Must match `port` in asterisk/config/manager.conf.
+      - "127.0.0.1:5038:5038/tcp"
     volumes:
       - ./asterisk/config:/etc/asterisk:ro
     # Runs only between `make asterisk-up` and `make asterisk-down`, never on its own after a

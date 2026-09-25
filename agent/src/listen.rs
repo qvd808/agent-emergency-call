@@ -67,6 +67,11 @@ impl Segmenter {
         self.gate.silence(self.t - WINDOW_S)
     }
 
+    /// Whether an utterance has started and not yet closed.
+    pub fn in_utterance(&self) -> bool {
+        self.open.is_some()
+    }
+
     /// Forgets any utterance in progress and starts afresh, keeping the clock.
     pub fn restart(&mut self) {
         *self = Segmenter { t: self.t, ..Segmenter::default() };

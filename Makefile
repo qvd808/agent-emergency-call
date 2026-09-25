@@ -29,15 +29,19 @@ asterisk-cli: ## Open the Asterisk console
 sip-accounts: ## Print what to type into the two softphones, passwords included
 	@asterisk/configure.sh accounts
 
-# Silero VAD, whisper tiny.en and the Piper voice, into models/ (gitignored). URLs as fetched
-# 2026-09-24; the voice's path follows piper-rs 0.2.0's examples/usage.rs.
-PIPER_VOICES := https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium
+# Silero VAD, whisper tiny.en and the Piper voices, into models/ (gitignored). URLs as fetched
+# 2026-09-24; the voices' paths follow piper-rs 0.2.0's examples/usage.rs. hfc_female is the
+# agent's voice, picked by ear; lessac, the voice before it, stays downloaded.
+PIPER_VOICES := https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US
 models: ## Download the VAD, speech-to-text and voice models
 	mkdir -p models
 	cd models && test -f silero_vad.onnx || curl -fL -O https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx
 	cd models && test -f ggml-tiny.en.bin || curl -fL -O https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
-	cd models && test -f en_US-lessac-medium.onnx || curl -fL -O $(PIPER_VOICES)/en_US-lessac-medium.onnx
-	cd models && test -f en_US-lessac-medium.onnx.json || curl -fL -O $(PIPER_VOICES)/en_US-lessac-medium.onnx.json
+	cd models && for v in hfc_female/medium/en_US-hfc_female-medium lessac/medium/en_US-lessac-medium; do \
+		f=$$(basename $$v); \
+		test -f $$f.onnx || curl -fL -O $(PIPER_VOICES)/$$v.onnx; \
+		test -f $$f.onnx.json || curl -fL -O $(PIPER_VOICES)/$$v.onnx.json; \
+	done
 
 # Piper turns text into phonemes with espeak-ng, whose dictionaries the espeak-rs-sys crate
 # compiles during the build. espeak-rs looks for them in PIPER_ESPEAKNG_DATA_DIRECTORY
