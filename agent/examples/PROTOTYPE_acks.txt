@@ -1,0 +1,200 @@
+# PROTOTYPE_acks, 2026-09-25, in the cloud container (4 CPU cores), 40 takes per candidate.
+# PIPER_ESPEAKNG_DATA_DIRECTORY=models cargo run --release -p agent --example PROTOTYPE_acks -- <takes> models/en_US-hfc_female-medium.onnx 40
+# python PROTOTYPE_acks_transcribe.py <takes> sherpa-onnx-whisper-small.en
+
+## espeak's phonemes, through the agent's espeak-rs
+Mm-hm.     -> ˌɛmˈɛmˌeɪtʃˈɛm
+I see.     -> aɪ sˈiː
+Okay.      -> oʊkˈeɪ
+Right.     -> ɹˈaɪt
+Got it.    -> ɡˈɑːt ɪt
+Uh-huh.    -> ˈʌhˈʌ
+Alright.   -> ɔːlɹˈaɪt
+
+## Takes heard as the intended word, Whisper small.en at 8 kHz
+alright  40/40 heard right, 580-790 ms long
+           33 x 'Alright.'
+            7 x 'All right.'
+default_i-see 40/40 heard right, 685-906 ms long
+           40 x 'I see.'
+default_okay 40/40 heard right, 662-859 ms long
+           40 x 'Okay.'
+got-it   26/40 heard right, 534-1103 ms long
+           16 x 'Got it.'
+            8 x 'Got it!'
+            5 x 'about it.'
+            3 x 'audit'
+            2 x 'Got it'
+            2 x 'Thought it.'
+            1 x 'I thought it'
+            1 x 'Hot it!'
+            1 x 'Potted.'
+            1 x 'I thought it.'
+i-see    35/40 heard right, 662-1057 ms long
+           35 x 'I see.'
+            2 x 'They see.'
+            1 x 'SC.'
+            1 x 'SE'
+            1 x 'a C'
+mm-hm     5/40 heard right, 801-1219 ms long
+            3 x 'mmh m'
+            3 x 'mmhm'
+            2 x "I'm a M."
+            2 x 'a momentum.'
+            2 x 'MMMH M'
+            1 x 'mmm-hmm'
+            1 x 'a mamma ch'
+            1 x 'Mommy 10.'
+            1 x "I'm a M'h"
+            1 x 'in my name'
+            1 x 'mmm hm'
+            1 x '"Emmemechem'
+            1 x 'MMHM'
+            1 x 'the momentum.'
+            1 x 'and mom eats him.'
+            1 x 'MMHM.'
+            1 x 'and M-H-M'
+            1 x 'MMMH-'
+            1 x 'and my mate Cham.'
+            1 x 'MMHN.'
+            1 x 'and momentum.'
+            1 x 'a mummachum'
+            1 x 'a mummachum.'
+            1 x "I'm on HM."
+            1 x 'M-M-H-'
+            1 x 'and MOMHM.'
+            1 x 'in momentum.'
+            1 x 'and MMMHM'
+            1 x 'A mommy gem.'
+            1 x "I'm on HM"
+            1 x 'and mommy gem.'
+            1 x 'and my mate, Jim.'
+            1 x 'MMMHM'
+okay     40/40 heard right, 615-906 ms long
+           40 x 'Okay.'
+ph-long   0/40 heard right, 534-813 ms long
+            7 x 'mama'
+            4 x 'Mama.'
+            3 x 'maw'
+            2 x 'normal'
+            2 x 'Momo'
+            2 x 'moment'
+            1 x 'nano'
+            1 x 'Mona?'
+            1 x 'Nana'
+            1 x 'Nana?'
+            1 x 'Mona.'
+            1 x 'MAMAM'
+            1 x 'mamam'
+            1 x 'No, no'
+            1 x 'mongo'
+            1 x 'Lomo?'
+            1 x 'No, no.'
+            1 x 'Mom.'
+            1 x 'bonla'
+            1 x 'Mama'
+            1 x 'bah'
+            1 x 'L L O'
+            1 x 'Wanna.'
+            1 x 'nomom'
+            1 x 'Momo.'
+            1 x 'gone'
+ph-schwa  0/40 heard right, 546-848 ms long
+           10 x 'Mom.'
+            5 x 'Mm-h'
+            4 x 'Mum.'
+            3 x 'One.'
+            3 x 'Mom?'
+            2 x 'them'
+            2 x 'them.'
+            2 x 'None.'
+            2 x 'Mum!'
+            2 x "Ma'am"
+            1 x 'in the next'
+            1 x 'then'
+            1 x 'none'
+            1 x 'MUM.'
+            1 x '"Numb'
+ph-strut  0/40 heard right, 476-813 ms long
+           10 x 'Mom.'
+            5 x 'Mum.'
+            3 x 'and then'
+            3 x 'A mum.'
+            3 x "I'm home"
+            2 x 'A man.'
+            1 x "I'm on"
+            1 x "I'm home."
+            1 x 'Bum.'
+            1 x 'mum'
+            1 x 'NONE'
+            1 x '*m'
+            1 x 'Mum!'
+            1 x 'a mom'
+            1 x "I'm a bum"
+            1 x 'nam'
+            1 x "I'm hum"
+            1 x 'A mom.'
+            1 x 'Mom'
+            1 x 'a mum'
+ph-syllabic  0/40 heard right, 430-685 ms long
+            4 x 'Nana.'
+            3 x 'man'
+            3 x 'men'
+            2 x '*b'
+            2 x 'men.'
+            2 x 'Nana'
+            2 x 'MAMM'
+            2 x 'nah'
+            1 x '*gib'
+            1 x 'Mennon'
+            1 x 'minute'
+            1 x '... none.'
+            1 x 'Nanot'
+            1 x 'Mannon.'
+            1 x 'LAMB'
+            1 x 'MAMAN'
+            1 x 'name it'
+            1 x 'Let him.'
+            1 x 'No.'
+            1 x 'NAMMAM'
+            1 x 'Mennel'
+            1 x 'nn'
+            1 x 'Manna'
+            1 x 'namu'
+            1 x '*M'
+            1 x 'M-m'
+            1 x 'NANIM'
+            1 x 'nano'
+right    40/40 heard right, 511-801 ms long
+           40 x 'Right.'
+steady_i-see 36/40 heard right, 778-987 ms long
+           36 x 'I see.'
+            1 x 'AC.'
+            1 x 'SC'
+            1 x 'by C.'
+            1 x 'a c'
+steady_okay 40/40 heard right, 685-917 ms long
+           40 x 'Okay.'
+uh-huh   12/40 heard right, 534-906 ms long
+           14 x 'Aha.'
+            9 x 'Uh-huh'
+            2 x 'uh huh'
+            2 x 'Aha?'
+            1 x 'A hat.'
+            1 x 'of her.'
+            1 x 'her.'
+            1 x 'Oh, ha'
+            1 x 'a hair'
+            1 x 'Uh huh.'
+            1 x 'her'
+            1 x 'Huh?'
+            1 x 'on her'
+            1 x 'uh'
+            1 x 'Uh-h'
+            1 x 'I have.'
+            1 x 'I heard.'
+warm-flat_i-see 38/40 heard right, 732-1126 ms long
+           38 x 'I see.'
+            2 x 'AC.'
+warm-flat_okay 40/40 heard right, 639-917 ms long
+           40 x 'Okay.'
