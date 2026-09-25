@@ -189,16 +189,25 @@ impl Checklist {
     /// A mark for the item just asked is taken as it is: "no" answers "have you had a fall?".
     /// A mark for any other item must share a word with `heard`, or it is dropped: the model
     /// marked eaten "no" for a resident who never mentioned food (text run of 2026-09-24), and
-    /// the item would have gone unasked.
+    /// the item would have gone unasked. A grounded mark for an item already answered is a
+    /// correction, and is added after the first answer.
     pub fn record(&mut self, marks: &Marks, asking: Asking, heard: &str) -> Recorded {
         let just_asked = self.last.and_then(Asking::item);
         let heard = normalise(heard);
         let mut recorded = Recorded::default();
         for item in ITEMS {
             let Some(note) = marks.get(item) else { continue };
-            // The model often repeats earlier marks; an answered item keeps its note. One
-            // closed without a clear answer still takes a late answer.
-            if matches!(self.entries[item.index()], Entry::Answered(_)) {
+            // The model often repeats earlier marks, so an answered item changes only when the
+            // resident's words this turn are behind a new note: "no fall", then "actually, I
+            // fell off my chair" (live call of 2026-09-25, issue #51). The earlier answer stays
+            // in front, so a correction never loses what was said. Only an exact repeat counts
+            // as one: "fall" after "no fall" is a correction, not a repeat. One closed without
+            // a clear answer still takes a late answer.
+            if let Entry::Answered(old) = &mut self.entries[item.index()] {
+                let repeat = normalise(old).ends_with(&normalise(note));
+                if !repeat && grounded(note, &heard) {
+                    *old = format!("{old}, then {note}");
+                }
                 continue;
             }
             if Some(item) == just_asked || grounded(note, &heard) {
@@ -501,6 +510,33 @@ mod tests {
         list.record(&marks(Some("fine"), None), Asking::Falls, "Fine.");
         list.record(&marks(None, Some("no")), Asking::Pain, "No.");
         assert!(list.note(false).contains("falls: whether they have had a fall - done (no)"));
+    }
+
+    #[test]
+    fn a_correction_in_the_resident_s_words_updates_an_answered_item() {
+        let mut list = Checklist::default();
+        list.record(&marks(Some("fine"), None), Asking::Falls, "I'm feeling fine.");
+        list.record(&marks(None, Some("no fall")), Asking::Pain, "No, I haven't had a fall.");
+        let heard = "Actually, I do have a fall. It was yesterday, I fell off my chair.";
+        list.record(&marks(None, Some("fell off my chair yesterday")), Asking::Eaten, heard);
+        let note = list.note(false);
+        let corrected = "done (no fall, then fell off my chair yesterday)";
+        assert!(note.contains(&format!("falls: whether they have had a fall - {corrected}")), "{note}");
+        // "fall" after "no fall" is a correction, not a repeat.
+        list.record(&marks(None, Some("fall")), Asking::Needs, "I did fall.");
+        assert!(list.note(false).contains("then fell off my chair yesterday, then fall)"));
+    }
+
+    #[test]
+    fn a_repeated_or_unfounded_mark_leaves_an_answered_item_alone() {
+        let mut list = Checklist::default();
+        list.record(&marks(Some("fine"), None), Asking::Falls, "Fine.");
+        list.record(&marks(None, Some("no fall")), Asking::Pain, "No fall.");
+        // The model repeats the note, even with the resident's words behind it.
+        list.record(&marks(None, Some("No fall.")), Asking::Eaten, "No fall, no pain either.");
+        // A different note with nothing this turn behind it.
+        list.record(&marks(None, Some("fell yesterday")), Asking::Needs, "I had some toast.");
+        assert!(list.note(false).contains("falls: whether they have had a fall - done (no fall)"));
     }
 
     #[test]
