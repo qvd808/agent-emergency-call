@@ -20,7 +20,7 @@
 //! A medical question gets the offer of a person; a yes to it escalates as asking for a person.
 //!
 //! To keep the wait short: the moment the resident's turn ends, a fixed acknowledgement plays
-//! ("Mm-hm."), and the reply is spoken as soon as the model has written it, while the model is
+//! ("Okay."), and the reply is spoken as soon as the model has written it, while the model is
 //! still writing the turn's summary ([`Head`]).
 //!
 //! A first version, to be built on:
@@ -78,7 +78,13 @@ pub const ESCALATION: &str = "I'm connecting you to a person now. Please stay on
                               If you are in danger, call nine one one yourself as soon as you can.";
 /// Played the moment the resident's turn ends, taking turns, so the model's thinking time
 /// isn't dead air (the maintainer's choice, 2026-09-24). Both fit good news and bad.
-pub const ACKS: [&str; 2] = ["Mm-hm.", "I see."];
+///
+/// They must be words the voice says clearly on every take, since each is synthesised once
+/// and then played all session (issue #45). espeak spells "Mm-hm." out as letters,
+/// `ˌɛmˈɛmˌeɪtʃˈɛm`, which a live call heard as "and Mummy Chem". Of 40 takes each, spoken as
+/// below and heard at 8 kHz by Whisper small.en, "Okay." and "Right." came back as the word 40
+/// times, "I see." 35 and "Mm-hm." 5 (`PROTOTYPE_acks`, 2026-09-25).
+pub const ACKS: [&str; 2] = ["Okay.", "Right."];
 /// The first and second re-prompt after an unanswered prompt.
 pub const STILL_THERE: [&str; 2] = [
     "Are you still there? Please say something if you can hear me.",
