@@ -54,12 +54,46 @@ pub struct LineStats {
     pub dropped_messages: u64,
     /// Frames dropped because the core had a second of audio it hadn't read yet.
     pub frames_dropped: u64,
+    /// Both sides of the call, when it is recorded.
+    pub tape: Option<Tape>,
+}
+
+/// Both sides of a call at the line's 8 kHz, for listening back (`RECORD_CALLS`). The
+/// resident's side is what Asterisk sent, with silence wherever the line filled a gap; the
+/// agent's is what was written, one frame per tick. Both advance 20 ms a frame, so they stay
+/// aligned to within the drift between Asterisk's delivery and the agent's clock: 51 frames,
+/// about 1 s, over a 63 s live call on 2026-09-25 (frames in against frames out).
+#[derive(Debug, Default, Clone)]
+pub struct Tape {
+    pub resident: Vec<i16>,
+    pub agent: Vec<i16>,
+}
+
+impl Tape {
+    /// Writes a stereo WAV: the resident on the left, the agent on the right.
+    pub fn write(&self, path: &std::path::Path) -> Result<(), Error> {
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: LINE_RATE_HZ,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut wav = hound::WavWriter::create(path, spec)?;
+        for i in 0..self.resident.len().max(self.agent.len()) {
+            wav.write_sample(self.resident.get(i).copied().unwrap_or(0))?;
+            wav.write_sample(self.agent.get(i).copied().unwrap_or(0))?;
+        }
+        wav.finalize()?;
+        Ok(())
+    }
 }
 
 /// Reads the UUID Asterisk sends first, then starts the call's line task. The task ends
-/// when either side hangs up, and returns what it counted.
+/// when either side hangs up, and returns what it counted, and with `record` both sides of
+/// the call.
 pub async fn accept<S>(
     mut stream: S,
+    record: bool,
 ) -> Result<(Uuid, Media, CallControl, JoinHandle<Result<LineStats, Error>>), Error>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -87,7 +121,7 @@ where
     let (commands_tx, commands) = mpsc::unbounded_channel();
     let media = Media { frames, played, speaker: Speaker::new(commands_tx.clone()) };
     let control = CallControl::new(commands_tx);
-    let task = tokio::spawn(run(stream, decoder, frames_tx, played_tx, commands));
+    let task = tokio::spawn(run(stream, decoder, frames_tx, played_tx, commands, record));
     Ok((uuid, media, control, task))
 }
 
@@ -97,13 +131,14 @@ async fn run<S>(
     frames: mpsc::Sender<Frame>,
     played: mpsc::UnboundedSender<MarkId>,
     mut commands: mpsc::UnboundedReceiver<Command>,
+    record: bool,
 ) -> Result<LineStats, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let mut inbox = Inbox::new();
     let mut outbox = Outbox::new();
-    let mut stats = LineStats::default();
+    let mut stats = LineStats { tape: record.then(Tape::default), ..LineStats::default() };
     let mut buf = [0u8; 4096];
 
     let mut clock = tokio::time::interval(TICK);
@@ -128,6 +163,9 @@ where
                     match message {
                         Message::Audio { rate_hz: LINE_RATE_HZ, pcm } => {
                             last_audio_in = Instant::now();
+                            if let Some(tape) = &mut stats.tape {
+                                tape.resident.extend(samples_from_le_bytes(&pcm));
+                            }
                             for frame in inbox.push(&pcm) {
                                 stats.frames_in += 1;
                                 deliver(&frames, frame, &mut stats);
@@ -158,6 +196,9 @@ where
                     Err(e) => return Err(e.into()),
                 }
                 stats.frames_out += 1;
+                if let Some(tape) = &mut stats.tape {
+                    tape.agent.extend_from_slice(&frame);
+                }
                 // The time the write finished, not the tick's scheduled time, which is
                 // always exactly 20 ms after the last one.
                 let written = Instant::now();
@@ -173,6 +214,9 @@ where
 
                 if tick.saturating_duration_since(last_audio_in) >= GAP_FILL_AFTER {
                     stats.frames_filled += 1;
+                    if let Some(tape) = &mut stats.tape {
+                        tape.resident.extend([0; LINE_FRAME]);
+                    }
                     deliver(&frames, inbox.silence(), &mut stats);
                 }
             }
@@ -492,7 +536,7 @@ mod tests {
     async fn started_line() -> (DuplexStream, Media, JoinHandle<Result<LineStats, Error>>) {
         let (mut asterisk, agent) = duplex(1 << 16);
         asterisk.write_all(&UUID_MESSAGE).await.unwrap();
-        let (uuid, media, _control, task) = accept(agent).await.unwrap();
+        let (uuid, media, _control, task) = accept(agent, false).await.unwrap();
         assert_eq!(uuid.to_string(), "6f9c1d2e-3a4b-4c5d-8e6f-708192a3b4c5");
         (asterisk, media, task)
     }
@@ -569,6 +613,23 @@ mod tests {
     /// With nothing from Asterisk, silent frames keep media time moving: one per tick once
     /// the gap reaches 100 ms.
     #[tokio::test(start_paused = true)]
+    async fn a_recorded_call_keeps_both_sides() {
+        let (mut asterisk, agent) = duplex(1 << 16);
+        asterisk.write_all(&UUID_MESSAGE).await.unwrap();
+        let (_uuid, media, _control, task) = accept(agent, true).await.unwrap();
+        let said: Vec<i16> = (0..LINE_FRAME as i16).collect();
+        asterisk.write_all(&encode(LINE_RATE_HZ, &samples_to_le_bytes(&said)).unwrap()).await.unwrap();
+        media.speaker.play(vec![1000; CORE_FRAME * 5]);
+        for _ in 0..10 {
+            read_frame(&mut asterisk).await;
+        }
+        drop(asterisk);
+        let tape = task.await.unwrap().unwrap().tape.unwrap();
+        assert_eq!(tape.resident[..LINE_FRAME], said[..]);
+        assert!(tape.agent.len() >= 10 * LINE_FRAME && tape.agent.iter().any(|&s| s != 0));
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_quiet_line_is_filled_with_silence() {
         let (asterisk, mut media, _task) = started_line().await;
         let start = Instant::now();
@@ -595,7 +656,7 @@ mod tests {
     async fn hangup_sends_the_hangup_message_and_ends_the_line() {
         let (mut asterisk, agent) = duplex(1 << 16);
         asterisk.write_all(&UUID_MESSAGE).await.unwrap();
-        let (_uuid, _media, control, task) = accept(agent).await.unwrap();
+        let (_uuid, _media, control, task) = accept(agent, false).await.unwrap();
         control.hangup();
         assert!(task.await.unwrap().is_ok());
         // Whatever silent frames went out first, the last message is the hangup.

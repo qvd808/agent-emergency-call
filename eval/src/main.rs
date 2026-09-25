@@ -98,6 +98,7 @@ async fn main() -> Result<(), Error> {
         calls_dir: services.calls_dir.clone(),
         barge_in: services.barge_in,
         end_of_turn: services.end_of_turn.clone(),
+        record: services.record,
     };
 
     // The residents.

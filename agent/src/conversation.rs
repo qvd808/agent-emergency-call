@@ -161,6 +161,8 @@ pub struct Services<L> {
     pub barge_in: bool,
     /// Smart Turn, to hold the floor at a pause. `None`: every turn ends after [`TURN_END`].
     pub end_of_turn: Option<EndOfTurn>,
+    /// Whether each call is recorded, both sides, next to its log.
+    pub record: bool,
 }
 
 impl<L> Clone for Services<L> {
@@ -174,6 +176,7 @@ impl<L> Clone for Services<L> {
             calls_dir: self.calls_dir.clone(),
             barge_in: self.barge_in,
             end_of_turn: self.end_of_turn.clone(),
+            record: self.record,
         }
     }
 }

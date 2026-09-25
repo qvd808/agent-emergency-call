@@ -125,7 +125,7 @@ async fn call(
     // The audio harness: play the clip, then transcribe whatever the resident says.
     stream.set_nodelay(true)?;
     let vad = Silero::new(vad_model)?;
-    let (uuid, media, _control, line) = line::accept(stream).await?;
+    let (uuid, media, _control, line) = line::accept(stream, false).await?;
     eprintln!("agent: call started, UUID {uuid}");
     let started = Instant::now();
     if let Some(clip) = clip {

@@ -47,6 +47,11 @@ fn switched_off(name: &str) -> bool {
     env(name).is_some_and(|v| matches!(v.to_lowercase().as_str(), "off" | "0" | "false" | "no"))
 }
 
+/// A switch that is off unless the environment turns it on.
+fn switched_on(name: &str) -> bool {
+    env(name).is_some_and(|v| matches!(v.to_lowercase().as_str(), "on" | "1" | "true" | "yes"))
+}
+
 /// The LLM the environment names: Ollama at `OLLAMA_URL`, running `OLLAMA_MODEL`. Returns it
 /// with a name for the log.
 pub fn ollama_from_env() -> (Ollama, String) {
@@ -99,6 +104,13 @@ pub async fn start_services<L: Llm>(stt: Stt, llm: L, llm_name: &str) -> Result<
         if end_of_turn.is_some() { "on" } else { "off (SMART_TURN)" }
     );
 
+    // Off unless `.env` turns it on: a recording holds a real voice, the maintainer's on a test
+    // call, and stays in the gitignored calls/ directory.
+    let record = switched_on("RECORD_CALLS");
+    if record {
+        eprintln!("agent: recording each call to {}/<call>.wav", calls_dir.display());
+    }
+
     Ok(Services {
         stt,
         tts,
@@ -108,6 +120,7 @@ pub async fn start_services<L: Llm>(stt: Stt, llm: L, llm_name: &str) -> Result<
         calls_dir,
         barge_in,
         end_of_turn,
+        record,
     })
 }
 
@@ -125,14 +138,22 @@ pub async fn answer<L: Llm + 'static>(
     stream.set_nodelay(true)?;
     // Each call gets its own VAD: Silero carries state from one window to the next.
     let vad = Silero::new(vad_model)?;
-    let (uuid, media, control, line) = line::accept(stream).await?;
+    let (uuid, media, control, line) = line::accept(stream, services.record).await?;
     eprintln!("agent: call started, UUID {uuid}");
     let control = pbx(control, &uuid);
 
     let started = Instant::now();
+    let calls_dir = services.calls_dir.clone();
     check_in(uuid.to_string(), media, control, vad, services).await;
     let stats = line.await??;
     log_stats(&uuid, started.elapsed(), &stats);
+    if let Some(tape) = &stats.tape {
+        let path = calls_dir.join(format!("{uuid}.wav"));
+        match tape.write(&path) {
+            Ok(()) => eprintln!("agent: call recorded to {}", path.display()),
+            Err(e) => eprintln!("agent: couldn't write the recording {}: {e}", path.display()),
+        }
+    }
     Ok(stats)
 }
 
