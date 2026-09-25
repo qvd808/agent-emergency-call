@@ -1,0 +1,149 @@
+== Per take: ms per kind of sound (noise_w 0), and the clip's length
+tone          n take timing              lead-in  speech  word end  punct.  sounds/s  clip s
+sympathetic   1 A    own                     128    2159       476     325      12.5    2.81
+sympathetic   1 B    prudence                 93    2426       673     348      11.1    3.07
+sympathetic   1 C    poppy                   929    2485       604     418      10.9    4.03
+sympathetic   1 D    poppy-own-lead-in       128    2485       604     418      10.9    3.23
+sympathetic   2 A    poppy                   569    3506       755     441      13.1    4.72
+sympathetic   2 B    prudence                 81    3262       766     522      14.1    4.07
+sympathetic   2 C    poppy-own-lead-in       116    3506       755     441      13.1    4.26
+sympathetic   2 D    own                     116    3077       662     337      15.0    3.73
+sympathetic   3 A    own                      93    3135       755     279      15.3    3.71
+sympathetic   3 B    prudence                337    3495       766     348      13.7    4.38
+sympathetic   3 C    poppy                   673    3599       650     499      13.3    4.97
+sympathetic   3 D    poppy-own-lead-in        93    3599       650     499      13.3    4.39
+sympathetic   4 A    prudence                 81    2856       615     255      14.7    3.39
+sympathetic   4 B    own                     186    2682       604     302      15.7    3.37
+sympathetic   4 C    poppy                   801    2902       604     464      14.5    4.37
+sympathetic   4 D    poppy-own-lead-in       186    2902       604     464      14.5    3.75
+sympathetic   5 A    prudence                 93    2566       557     337      15.2    3.20
+sympathetic   5 B    poppy                   313    2554       499     395      15.3    3.46
+sympathetic   5 C    own                      81    2357       464     197      16.5    2.84
+sympathetic   5 D    poppy-own-lead-in        81    2554       499     395      15.3    3.23
+glad          1 A    own                      93    2357       348     221      12.7    2.67
+glad          1 B    poppy                   522    2276       372     325      13.2    3.12
+glad          1 C    prudence                 23    2392       476     163      12.5    2.58
+glad          1 D    poppy-own-lead-in        93    2276       372     325      13.2    2.69
+glad          2 A    poppy-own-lead-in       116    3158       580     708      13.6    4.18
+glad          2 B    prudence                 70    3239       755     406      13.3    3.92
+glad          2 C    poppy                   232    3158       580     708      13.6    4.30
+glad          2 D    own                     116    3030       604     372      14.2    3.72
+glad          3 A    own                     128    3065       580     302      12.4    3.69
+glad          3 B    poppy-own-lead-in       128    3158       615     557      12.0    4.04
+glad          3 C    poppy                   731    3158       615     557      12.0    4.65
+glad          3 D    prudence                197    3355       673     488      11.3    4.24
+glad          4 A    own                      81    2937       569     395      13.3    3.61
+glad          4 B    poppy-own-lead-in        81    2891       604     534      13.5    3.71
+glad          4 C    prudence                279    3088       731     337      12.6    3.90
+glad          4 D    poppy                   511    2891       604     534      13.5    4.14
+glad          5 A    poppy-own-lead-in       104    3030       406     708      14.2    4.04
+glad          5 B    own                     104    2879       395     418      14.9    3.60
+glad          5 C    prudence                128    3506       580     430      12.3    4.26
+glad          5 D    poppy                   580    3030       406     708      14.2    4.52
+reassuring    1 A    prudence                290    2984       615     383      14.4    3.86
+reassuring    1 B    poppy                   476    2926       604     430      14.7    4.03
+reassuring    1 C    own                     139    2624       499     290      16.4    3.25
+reassuring    1 D    poppy-own-lead-in       139    2926       604     430      14.7    3.69
+reassuring    2 A    prudence                279    3727       813     279      13.4    4.48
+reassuring    2 B    poppy-own-lead-in        93    3576       604     395      14.0    4.26
+reassuring    2 C    poppy                   848    3576       604     395      14.0    5.02
+reassuring    2 D    own                      93    3042       569     267      16.4    3.60
+reassuring    3 A    poppy                   290    3042       592     406      13.2    3.94
+reassuring    3 B    own                     104    2508       406     267      16.0    3.08
+reassuring    3 C    prudence                 81    3193       604     383      12.5    3.86
+reassuring    3 D    poppy-own-lead-in       104    3042       592     406      13.2    3.75
+reassuring    4 A    own                     104    2995       627     244      16.0    3.54
+reassuring    4 B    poppy-own-lead-in       104    3553       662     302      13.5    4.16
+reassuring    4 C    prudence                267    3402       685     325      14.1    4.19
+reassuring    4 D    poppy                   557    3553       662     302      13.5    4.61
+reassuring    5 A    poppy                   673    3320       546     476      13.6    4.67
+reassuring    5 B    prudence                174    3320       662     197      13.6    3.89
+reassuring    5 C    poppy-own-lead-in       128    3320       546     476      13.6    4.12
+reassuring    5 D    own                     128    3170       592     232      14.2    3.73
+serious       1 A    poppy-own-lead-in        81    3007       546     348      13.3    3.64
+serious       1 B    prudence                 70    2856       615     534      14.0    3.66
+serious       1 C    own                      81    2485       464     290      16.1    3.06
+serious       1 D    poppy                   453    3007       546     348      13.3    4.01
+serious       2 A    prudence                104    6269      1289     615      13.9    7.39
+serious       2 B    poppy                   673    6490      1149     592      13.4    8.16
+serious       2 C    poppy-own-lead-in       151    6490      1149     592      13.4    7.63
+serious       2 D    own                     151    5654      1115     511      15.4    6.72
+serious       3 A    poppy                   267    3355       662     418      13.1    4.24
+serious       3 B    poppy-own-lead-in       139    3355       662     418      13.1    4.11
+serious       3 C    own                     139    3135       627     406      14.0    3.88
+serious       3 D    prudence                 93    3297       743     406      13.3    4.00
+serious       4 A    own                     151    2101       546     279      18.1    2.73
+serious       4 B    poppy-own-lead-in       151    2554       569     488      14.9    3.39
+serious       4 C    poppy                   372    2554       569     488      14.9    3.61
+serious       4 D    prudence                255    2566       755     302      14.8    3.32
+serious       5 A    poppy-own-lead-in        70    3425       685     604      14.0    4.30
+serious       5 B    poppy                   778    3425       685     604      14.0    5.01
+serious       5 C    prudence                 93    3448       824     232      13.9    3.97
+serious       5 D    own                      70    2995       708     313      16.0    3.58
+neutral       1 A    prudence                313    1834       395     313      14.2    2.66
+neutral       1 B    poppy                   406    1718       267     383      15.1    2.71
+neutral       1 C    poppy-own-lead-in        70    1718       267     383      15.1    2.37
+neutral       1 D    own                      70    1579       290     302      16.5    2.15
+neutral       2 A    prudence                302    3634       743     430      14.6    4.77
+neutral       2 B    poppy                   708    3402       604     697      15.6    5.21
+neutral       2 C    poppy-own-lead-in       163    3402       604     697      15.6    4.66
+neutral       2 D    own                     163    3146       534     569      16.8    4.28
+neutral       3 A    own                     104    1974       372     453      15.7    2.73
+neutral       3 B    poppy                   604    2171       383     522      14.3    3.50
+neutral       3 C    prudence                 93    1985       430     453      15.6    2.73
+neutral       3 D    poppy-own-lead-in       104    2171       383     522      14.3    3.00
+neutral       4 A    prudence                255    2009       534     313      12.4    2.78
+neutral       4 B    poppy-own-lead-in        81    2009       441     522      12.4    2.81
+neutral       4 C    own                      81    1579       348     255      15.8    2.12
+neutral       4 D    poppy                   755    2009       441     522      12.4    3.49
+neutral       5 A    prudence                325    2868       627     197      15.7    3.59
+neutral       5 B    poppy-own-lead-in        81    2647       430     534      17.0    3.46
+neutral       5 C    poppy                   592    2647       430     534      17.0    3.97
+neutral       5 D    own                      81    2438       499     313      18.5    3.03
+playful       1 A    poppy                   650    3947       766     534      11.7    5.33
+playful       1 B    poppy-own-lead-in       186    3947       766     534      11.7    4.87
+playful       1 C    own                     186    3262       720     302      14.1    3.95
+playful       1 D    prudence                 46    3889       743     302      11.8    4.44
+playful       2 A    prudence                499    2218       604     290      13.1    3.21
+playful       2 B    poppy                   441    2159       569     360      13.4    3.16
+playful       2 C    poppy-own-lead-in       128    2159       569     360      13.4    2.85
+playful       2 D    own                     128    1892       453     267      15.3    2.49
+playful       3 A    poppy                   325    2856       546     534      12.6    3.92
+playful       3 B    own                     163    2694       534     395      13.4    3.45
+playful       3 C    poppy-own-lead-in       163    2856       546     534      12.6    3.75
+playful       3 D    prudence                104    3042       685     395      11.8    3.74
+playful       4 A    poppy-own-lead-in        70    2612       522     755      13.0    3.64
+playful       4 B    prudence                244    2821       673     557      12.1    3.82
+playful       4 C    poppy                   522    2612       522     755      13.0    4.09
+playful       4 D    own                      70    2334       488     395      14.6    3.00
+playful       5 A    poppy-own-lead-in       128    3239       627     604      14.2    4.17
+playful       5 B    prudence                464    3274       731     464      14.1    4.40
+playful       5 C    own                     128    3053       639     348      15.1    3.73
+playful       5 D    poppy                   441    3239       627     604      14.2    4.48
+
+== Per tone, mean over its 5 lines
+tone         timing              lead-in  speech  word end  punct.  sounds/s
+sympathetic  own                     121    2682       592     288      15.0
+sympathetic  prudence                137    2921       676     362      13.8
+sympathetic  poppy                   657    3009       622     444      13.4
+sympathetic  poppy-own-lead-in       121    3009       622     444      13.4
+glad         own                     104    2854       499     341      13.5
+glad         prudence                139    3116       643     365      12.4
+glad         poppy                   515    2902       515     567      13.3
+glad         poppy-own-lead-in       104    2902       515     567      13.3
+reassuring   own                     114    2868       539     260      15.8
+reassuring   prudence                218    3325       676     313      13.6
+reassuring   poppy                   569    3283       601     402      13.8
+reassuring   poppy-own-lead-in       114    3283       601     402      13.8
+serious      own                     118    3274       692     360      15.9
+serious      prudence                123    3687       845     418      14.0
+serious      poppy                   509    3766       722     490      13.7
+serious      poppy-own-lead-in       118    3766       722     490      13.7
+neutral      own                     100    2143       409     378      16.7
+neutral      prudence                258    2466       546     341      14.5
+neutral      poppy                   613    2389       425     532      14.9
+neutral      poppy-own-lead-in       100    2389       425     532      14.9
+playful      own                     135    2647       567     341      14.5
+playful      prudence                272    3049       687     402      12.6
+playful      poppy                   476    2963       606     557      13.0
+playful      poppy-own-lead-in       135    2963       606     557      13.0

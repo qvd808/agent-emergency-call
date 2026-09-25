@@ -1,0 +1,25 @@
+== Lines per timing (5 lines a tone)
+tone                       own          prudence             poppy poppy-own-lead-in         None fits        Can't tell
+sympathetic                  0                 0                 2                 1                 2                 0
+glad                         2                 0                 1                 1                 0                 1
+reassuring                   1                 0                 2                 2                 0                 0
+serious                      2                 1                 0                 2                 0                 0
+neutral                      2                 1                 1                 0                 0                 1
+playful                      0                 2                 0                 1                 2                 0
+all                          7                 4                 6                 7                 4                 2
+
+== Line 1, heard again blind
+sympathetic  earlier prudence  now poppy              changed
+glad         earlier poppy     now poppy              held
+reassuring   earlier poppy     now poppy              held
+serious      earlier own       now own                held
+
+== Poppy's timing: picked with its wait 6 times, without it 7
+
+== Speech rate of the picked timing, ranked among the three (1 = fastest)
+sympathetic  3 3 3
+glad         1 1 2 1
+reassuring   2 2 2 1 3
+serious      1 3 3 3 1
+neutral      1 1 3 3
+playful      2 3 3
