@@ -151,6 +151,17 @@ What the numbers show (**measured**):
 - Both whisper clips are 4–7% voiced, so their pitch figures are meaningless.
 - Piper draws random phoneme lengths at its default `noise_w` 0.8, so lengths and pitch shift a
   little from run to run.
+- In these clips, a line's sentences run straight on with no pause between them. The agent puts
+  0.2 s after each sentence (`agent/src/tts.rs:64`). This is the same for every voice.
+
+Heard by the maintainer on 2026-09-25:
+- hfc_female stays the agent's voice, as the more comfortable and reassuring one.
+- Poppy and Prudence are interesting for specific scenarios. They end each word with a tone
+  that sounds confident, the word clear and a stop after it.
+- All the semaine voices sound like someone making an announcement.
+
+What makes those two sound that way is followed up in
+[confident-endings.md](confident-endings.md).
 
 No voice renders an apologetic "sympathetic". semaine and thorsten_emotional have no such
 speaker (**fetched**, [V5] [V6]). Their clips show the mechanism and the voice quality a Piper

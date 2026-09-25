@@ -1,0 +1,29 @@
+== hfc_female speaking with semaine's frame counts (noise_w 0)
+  sympathetic: frames moved, prudence 86, poppy 151
+  glad: frames moved, prudence 90, poppy 111
+  reassuring: frames moved, prudence 142, poppy 135
+  serious: frames moved, prudence 108, poppy 114
+hfc_female-sympathetic-own-timing.wav           2.81 s
+hfc_female-sympathetic-prudence-timing.wav      3.07 s
+hfc_female-sympathetic-poppy-timing.wav         4.03 s
+hfc_female-glad-own-timing.wav                  2.67 s
+hfc_female-glad-prudence-timing.wav             2.58 s
+hfc_female-glad-poppy-timing.wav                3.12 s
+hfc_female-reassuring-own-timing.wav            3.25 s
+hfc_female-reassuring-prudence-timing.wav       3.86 s
+hfc_female-reassuring-poppy-timing.wav          4.03 s
+hfc_female-serious-own-timing.wav               3.06 s
+hfc_female-serious-prudence-timing.wav          3.66 s
+hfc_female-serious-poppy-timing.wav             4.01 s
+
+== semaine, blends of two speaker vectors (noise_w 0)
+semaine-glad-obadiah-to-poppy-000.wav           2.93 s
+semaine-glad-obadiah-to-poppy-025.wav           3.44 s
+semaine-glad-obadiah-to-poppy-050.wav           3.33 s
+semaine-glad-obadiah-to-poppy-075.wav           3.19 s
+semaine-glad-obadiah-to-poppy-100.wav           3.09 s
+semaine-sympathetic-prudence-to-poppy-000.wav   3.10 s
+semaine-sympathetic-prudence-to-poppy-025.wav   3.15 s
+semaine-sympathetic-prudence-to-poppy-050.wav   3.42 s
+semaine-sympathetic-prudence-to-poppy-075.wav   3.68 s
+semaine-sympathetic-prudence-to-poppy-100.wav   3.96 s
