@@ -207,6 +207,15 @@ If a speakerphone's echo makes the agent pause on its own voice, use a headset, 
 `BARGE_IN=off`. `make asterisk-cli`, then `pjsip show contacts`, shows which phones are
 registered.
 
+### Get a call from the agent
+
+`make checkin`, instead of `make agent`, runs the agent and at once calls every extension in
+`RESIDENTS` (1001 by default). Answer, and the check-in runs as it does when you dial in. Let
+it ring out instead, and it tries again 2 minutes later, three times in all; after the third
+miss the agent prints a missed check-in alert for the dispatcher. Each check-in's attempts go
+in `calls/check-in-<extension>-<time>.json`. `CHECKIN_EVERY_MIN` repeats the round, and the
+other `CHECKIN_*` settings in `.env.example` change the attempts, the wait and the ring time.
+
 ## Repository
 
 ```

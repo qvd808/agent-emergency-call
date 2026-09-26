@@ -1,18 +1,25 @@
 //! A minimal client for Asterisk's manager interface (AMI), for the escalation's transfer
-//! (issue #20). Each use opens its own short session: log in with events off, run one action,
-//! log off. Wire format and permissions from `docs/research/asterisk-manager-interface.md` on
-//! branch `research/asterisk-manager-interface`, section 6 (issue #5).
+//! (issue #20) and outbound check-ins (issue #22). Each use opens its own short session: log
+//! in, run one action, log off. Wire format and permissions from
+//! `docs/research/asterisk-manager-interface.md` on branch `research/asterisk-manager-interface`,
+//! section 6 (issue #5).
 //!
 //! Finding the call's channel uses `Status`, not `DBGet`: `Status` is allowed to the `call`
 //! class (`main/manager.c:9801` at 22.11.0), and `DBGet` would need `reporting` or `system`
 //! on top of the `call,originate` user pinned in issue #30. It lists every channel with the
 //! variables asked for (`manager.c:3800-3870`), so the agent picks the one whose `AS_UUID`,
 //! set by the dialplan before `AudioSocket()`, is this call's UUID.
+//!
+//! Placing a call is `Originate` with `Async: true`, which answers at once; the outcome comes
+//! later as events (research, sections 2 and 3). So that session alone logs in with events on,
+//! and stays open while the phone rings.
 
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+
+use super::Placed;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -21,6 +28,22 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Where the dialplan's phones live: extensions.conf, `[from-phones]`.
 pub const PHONES_CONTEXT: &str = "from-phones";
+
+/// Where an outbound check-in goes once the resident answers: extensions.conf,
+/// `[checkin-outbound]`, extension `start`. No phone can dial into that context.
+const OUTBOUND_CONTEXT: &str = "checkin-outbound";
+const OUTBOUND_EXTEN: &str = "start";
+
+/// What the resident's phone shows for an outbound check-in. 3100 is the agent's own
+/// extension, so calling back from the phone's history reaches a check-in too.
+const OUTBOUND_CALLER_ID: &str = "\"Check-in\" <3100>";
+
+/// How long past the ring timeout to wait for Asterisk to report the outcome.
+const OUTCOME_MARGIN: Duration = Duration::from_secs(10);
+
+/// How long to wait, after a missed call's `OriginateResponse`, for the `Hangup` that says why.
+/// The two are raised by different paths, in no set order (research, section 3).
+const HANGUP_WAIT: Duration = Duration::from_secs(1);
 
 /// Numbers that are emergency services somewhere. A transfer never goes to one, whatever
 /// `.env` says; the dialplan has no such extension anyway.
@@ -56,13 +79,14 @@ impl Message {
     }
 }
 
-/// Checks an extension a transfer may go to: digits only, and never an emergency number.
+/// Checks an extension a transfer or a placed call may go to: digits only, and never an
+/// emergency number.
 pub fn check_extension(extension: &str) -> Result<(), Error> {
     if extension.is_empty() || !extension.chars().all(|c| c.is_ascii_digit()) {
         return Err(format!("{extension:?} is not an internal extension number").into());
     }
     if EMERGENCY_NUMBERS.contains(&extension) {
-        return Err(format!("{extension} is an emergency number; never transfer to it").into());
+        return Err(format!("{extension} is an emergency number; never call it").into());
     }
     Ok(())
 }
@@ -71,7 +95,7 @@ impl Ami {
     /// Logs in and out: AMI is up and the account works.
     pub async fn check(&self) -> Result<(), Error> {
         tokio::time::timeout(TIMEOUT, async {
-            let mut session = self.open().await?;
+            let mut session = self.open(false).await?;
             session.logoff().await;
             Ok(())
         })
@@ -82,7 +106,7 @@ impl Ami {
     /// The channel running AudioSocket for the call with this UUID.
     pub async fn find_channel(&self, uuid: &str) -> Result<Channel, Error> {
         tokio::time::timeout(TIMEOUT, async {
-            let mut session = self.open().await?;
+            let mut session = self.open(false).await?;
             let channels = session.status("AS_UUID").await?;
             session.logoff().await;
             find(&channels, uuid).ok_or_else(|| format!("no channel has AS_UUID={uuid}").into())
@@ -97,7 +121,7 @@ impl Ami {
     pub async fn redirect(&self, channel: &str, extension: &str) -> Result<String, Error> {
         check_extension(extension)?;
         tokio::time::timeout(TIMEOUT, async {
-            let mut session = self.open().await?;
+            let mut session = self.open(false).await?;
             let response = session
                 .action(
                     "Redirect",
@@ -120,12 +144,54 @@ impl Ami {
         .map_err(|_| "AMI timed out")?
     }
 
-    async fn open(&self) -> Result<Session<TcpStream>, Error> {
+    /// Rings `extension` for up to `ring`, and follows the call to its outcome. Answered, the
+    /// dialplan's `[checkin-outbound]` hands the call to the agent over AudioSocket, with
+    /// `call` as its UUID. `extension` must pass the same check as a transfer's.
+    pub async fn originate(
+        &self,
+        extension: &str,
+        call: &str,
+        ring: Duration,
+    ) -> Result<Placed, Error> {
+        check_extension(extension)?;
+        tokio::time::timeout(ring + OUTCOME_MARGIN, async {
+            let mut session = self.open(true).await?;
+            let placed = session.originate(extension, call, ring).await;
+            session.logoff().await;
+            placed
+        })
+        .await
+        .map_err(|_| "AMI reported no outcome in time")?
+    }
+
+    /// Logs in. With `events` on, the session also receives every event the account may read.
+    async fn open(&self, events: bool) -> Result<Session<TcpStream>, Error> {
         let stream = TcpStream::connect(&self.addr).await?;
         let mut session = Session::new(stream);
-        session.login(&self.username, &self.secret).await?;
+        session.login(&self.username, &self.secret, events).await?;
         Ok(session)
     }
+}
+
+/// Why a placed call was missed, for the log. `Reason` 3 is no answer before the timeout;
+/// busy, declined and unreachable all come as 0, and only the channel's `Hangup` tells them
+/// apart. A call whose channel was never made has no `Hangup` (research, section 3).
+fn why_missed(reason: Option<&str>, hangup: Option<&Message>) -> String {
+    if reason == Some("3") {
+        return "no answer before the ring timeout".to_string();
+    }
+    let Some(hangup) = hangup else {
+        return "the phone couldn't be dialled: not registered, or unreachable".to_string();
+    };
+    let cause = hangup.get("Cause-txt").unwrap_or("no cause given");
+    match hangup.get("TechCause") {
+        Some(sip) => format!("{cause} (SIP {sip})"),
+        None => cause.to_string(),
+    }
+}
+
+fn is_success(message: &Message) -> bool {
+    message.get("Response").is_some_and(|r| r.eq_ignore_ascii_case("success"))
 }
 
 /// Picks the channel whose `AS_UUID` is `uuid` from `Status` events.
@@ -153,20 +219,98 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Session<S> {
         Session { stream: BufReader::new(stream), next_id: 0 }
     }
 
-    /// Reads the banner, then logs in with events off, so only responses come back.
-    async fn login(&mut self, username: &str, secret: &str) -> Result<(), Error> {
+    /// Reads the banner, then logs in. With `events` off, only responses come back. On, every
+    /// event the account's `read` classes allow comes too (`manager.c:838-865`): for this
+    /// account that is `call` (asterisk/configure.sh).
+    async fn login(&mut self, username: &str, secret: &str, events: bool) -> Result<(), Error> {
         let mut banner = String::new();
         self.stream.read_line(&mut banner).await?;
         if !banner.starts_with("Asterisk Call Manager/") {
             return Err(format!("not an AMI banner: {banner:?}").into());
         }
+        let events = if events { "on" } else { "off" };
         let response = self
-            .action("Login", &[("Username", username), ("Secret", secret), ("Events", "off")])
+            .action("Login", &[("Username", username), ("Secret", secret), ("Events", events)])
             .await?;
         match response.get("Response") {
             Some(r) if r.eq_ignore_ascii_case("success") => Ok(()),
             _ => Err(format!("AMI login failed: {}", response.get("Message").unwrap_or("")).into()),
         }
+    }
+
+    /// Sends `Originate` and follows it to its outcome: `OriginateResponse` says whether the
+    /// resident answered, and for a miss the `Hangup` of the call's channel says why. The two
+    /// come in either order (research, section 3). Needs a session with events on.
+    async fn originate(
+        &mut self,
+        extension: &str,
+        call: &str,
+        ring: Duration,
+    ) -> Result<Placed, Error> {
+        let channel = format!("PJSIP/{extension}");
+        let timeout_ms = ring.as_millis().to_string();
+        // Parameters from `main/manager_doc.xml:645-714` at 22.11.0, via the research, section 2.
+        let id = self
+            .send(
+                "Originate",
+                &[
+                    ("Channel", &channel),
+                    ("Context", OUTBOUND_CONTEXT),
+                    ("Exten", OUTBOUND_EXTEN),
+                    ("Priority", "1"),
+                    // Milliseconds from dialling to answer.
+                    ("Timeout", &timeout_ms),
+                    // Answer now and report the outcome as an event, rather than holding the
+                    // session until the phone stops ringing.
+                    ("Async", "true"),
+                    // The channel's uniqueid: the dialplan passes it to AudioSocket() as the
+                    // call's UUID, and every event about the call carries it.
+                    ("ChannelId", call),
+                    // Without it, only signed linear is asked for, which the phones don't offer.
+                    ("Codecs", "ulaw,alaw"),
+                    ("CallerID", OUTBOUND_CALLER_ID),
+                ],
+            )
+            .await?;
+        let mut missed: Option<Message> = None;
+        let mut hangup: Option<Message> = None;
+        loop {
+            let message = match missed {
+                None => self.read().await?,
+                // Missed: a moment more for the Hangup that says why, if there is one. The
+                // outcome is known, so AMI closing now doesn't change it.
+                Some(_) => match tokio::time::timeout(HANGUP_WAIT, self.read()).await {
+                    Ok(Ok(message)) => message,
+                    _ => break,
+                },
+            };
+            let ours = message.get("ActionID") == Some(id.as_str());
+            match message.get("Event") {
+                // Originate's own response: queued, or refused outright.
+                None if ours && !is_success(&message) => {
+                    let why = message.get("Message").unwrap_or_default();
+                    return Err(format!("Originate refused: {why}").into());
+                }
+                Some(event) if ours && event.eq_ignore_ascii_case("OriginateResponse") => {
+                    if is_success(&message) {
+                        return Ok(Placed::Answered);
+                    }
+                    missed = Some(message);
+                }
+                Some(event)
+                    if event.eq_ignore_ascii_case("Hangup")
+                        && message.get("Uniqueid") == Some(call) =>
+                {
+                    hangup = Some(message);
+                }
+                _ => {}
+            }
+            if missed.is_some() && hangup.is_some() {
+                break;
+            }
+        }
+        let reason = missed.as_ref().and_then(|m| m.get("Reason"));
+        Ok(Placed::Missed(why_missed(reason, hangup.as_ref())))
     }
 
     async fn logoff(&mut self) {
@@ -289,7 +433,7 @@ mod tests {
             ],
         ));
         let mut session = Session::new(client);
-        session.login("agent", "secret").await.unwrap();
+        session.login("agent", "secret", false).await.unwrap();
         let channels = session.status("AS_UUID").await.unwrap();
         assert_eq!(channels.len(), 2);
         let channel = find(&channels, "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0").unwrap();
@@ -311,8 +455,97 @@ mod tests {
             server,
             vec!["Response: Error\r\nActionID: {id}\r\nMessage: Authentication failed\r\n\r\n"],
         ));
-        let error = Session::new(client).login("agent", "wrong").await.unwrap_err();
+        let error = Session::new(client).login("agent", "wrong", false).await.unwrap_err();
         assert!(error.to_string().contains("Authentication failed"), "{error}");
+    }
+
+    const CALL: &str = "0d4c6f7e-2a61-4f0b-8c1e-5b9a3e7d2f10";
+    const LOGIN_OK: &str = "Response: Success\r\nActionID: {id}\r\nMessage: Authentication accepted\r\n\r\n";
+
+    /// Logs in with events on, places a call to 1001 and returns what became of it, with
+    /// everything the agent sent. `reply` is Asterisk's answer to the `Originate`.
+    async fn originate(reply: &'static str) -> (Result<Placed, Error>, String) {
+        let (client, server) = tokio::io::duplex(4096);
+        let fake = tokio::spawn(asterisk(server, vec![LOGIN_OK, reply]));
+        let mut session = Session::new(client);
+        session.login("agent", "secret", true).await.unwrap();
+        let placed = session.originate("1001", CALL, Duration::from_secs(30)).await;
+        drop(session);
+        (placed, fake.await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn an_answered_call_is_reported_answered() {
+        // The response, then events: another call's, and this one's outcome, as in the research
+        // (section 2).
+        let reply = "Response: Success\r\nActionID: {id}\r\nMessage: Originate successfully queued\r\n\r\n\
+             Event: Newchannel\r\nPrivilege: call,all\r\nChannel: PJSIP/2000-00000003\r\n\
+             Uniqueid: 1727300000.12\r\n\r\n\
+             Event: OriginateResponse\r\nPrivilege: call,all\r\nActionID: {id}\r\n\
+             Response: Success\r\nChannel: PJSIP/1001-00000007\r\nContext: checkin-outbound\r\n\
+             Exten: start\r\nReason: 4\r\nUniqueid: 0d4c6f7e-2a61-4f0b-8c1e-5b9a3e7d2f10\r\n\
+             CallerIDNum: 3100\r\nCallerIDName: Check-in\r\n\r\n";
+        let (placed, sent) = originate(reply).await;
+        assert_eq!(placed.unwrap(), Placed::Answered);
+        assert!(sent.contains("Events: on\r\n"), "{sent}");
+        for header in [
+            "Action: Originate\r\n",
+            "Channel: PJSIP/1001\r\n",
+            "Context: checkin-outbound\r\n",
+            "Exten: start\r\n",
+            "Timeout: 30000\r\n",
+            "Async: true\r\n",
+            "ChannelId: 0d4c6f7e-2a61-4f0b-8c1e-5b9a3e7d2f10\r\n",
+        ] {
+            assert!(sent.contains(header), "{header:?} not in {sent}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_busy_phone_is_missed_with_the_hangup_s_cause() {
+        // The Hangup can come before the OriginateResponse; another channel's is ignored.
+        let reply = "Response: Success\r\nActionID: {id}\r\nMessage: Originate successfully queued\r\n\r\n\
+             Event: Hangup\r\nPrivilege: call,all\r\nUniqueid: 1727300000.12\r\nCause: 16\r\n\
+             Cause-txt: Normal Clearing\r\n\r\n\
+             Event: Hangup\r\nPrivilege: call,all\r\nUniqueid: 0d4c6f7e-2a61-4f0b-8c1e-5b9a3e7d2f10\r\n\
+             Cause: 17\r\nCause-txt: User busy\r\nTechCause: 486\r\n\r\n\
+             Event: OriginateResponse\r\nPrivilege: call,all\r\nActionID: {id}\r\n\
+             Response: Failure\r\nChannel: PJSIP/1001\r\nReason: 0\r\n\
+             Uniqueid: 0d4c6f7e-2a61-4f0b-8c1e-5b9a3e7d2f10\r\n\r\n";
+        let (placed, _) = originate(reply).await;
+        assert_eq!(placed.unwrap(), Placed::Missed("User busy (SIP 486)".to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_call_is_missed_at_the_ring_timeout() {
+        let reply = "Response: Success\r\nActionID: {id}\r\nMessage: Originate successfully queued\r\n\r\n\
+             Event: OriginateResponse\r\nPrivilege: call,all\r\nActionID: {id}\r\n\
+             Response: Failure\r\nChannel: PJSIP/1001\r\nReason: 3\r\n\
+             Uniqueid: 0d4c6f7e-2a61-4f0b-8c1e-5b9a3e7d2f10\r\n\r\n\
+             Event: Hangup\r\nPrivilege: call,all\r\nUniqueid: 0d4c6f7e-2a61-4f0b-8c1e-5b9a3e7d2f10\r\n\
+             Cause: 19\r\nCause-txt: User alerting, no answer\r\n\r\n";
+        let (placed, _) = originate(reply).await;
+        assert_eq!(placed.unwrap(), Placed::Missed("no answer before the ring timeout".to_string()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_phone_that_can_t_be_dialled_is_missed_without_a_hangup() {
+        // No channel is made for an unregistered endpoint, so no Hangup ever comes.
+        let reply = "Response: Success\r\nActionID: {id}\r\nMessage: Originate successfully queued\r\n\r\n\
+             Event: OriginateResponse\r\nPrivilege: call,all\r\nActionID: {id}\r\n\
+             Response: Failure\r\nChannel: PJSIP/1001\r\nReason: 0\r\n\
+             Uniqueid: 0d4c6f7e-2a61-4f0b-8c1e-5b9a3e7d2f10\r\n\r\n";
+        let (placed, _) = originate(reply).await;
+        let Placed::Missed(why) = placed.unwrap() else { panic!("not missed") };
+        assert!(why.contains("couldn't be dialled"), "{why}");
+    }
+
+    #[tokio::test]
+    async fn a_refused_originate_is_an_error() {
+        let reply = "Response: Error\r\nActionID: {id}\r\nMessage: Extension does not exist.\r\n\r\n";
+        let (placed, _) = originate(reply).await;
+        let error = placed.unwrap_err();
+        assert!(error.to_string().contains("Extension does not exist."), "{error}");
     }
 
     #[test]

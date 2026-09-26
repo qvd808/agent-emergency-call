@@ -15,6 +15,7 @@ use turn::vad::Silero;
 use crate::conversation::{Lines, Services, check_in};
 use crate::end_of_turn::EndOfTurn;
 use crate::llm::{Llm, Message, Ollama, Role, SYSTEM_PROMPT};
+use crate::schedule::{Outbound, Policy, Schedule};
 use crate::stt::Stt;
 use crate::telephony::CallControl;
 use crate::telephony::ami::check_extension;
@@ -41,6 +42,7 @@ const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL: &str = "qwen3:4b-instruct-2507-q4_K_M";
 const DEFAULT_DISPATCHER: &str = "2000";
 const DEFAULT_CALLS_DIR: &str = "calls";
+const DEFAULT_RESIDENTS: &str = "1001";
 
 /// A setting from the environment. Empty counts as unset.
 pub fn env(name: &str) -> Option<String> {
@@ -63,6 +65,41 @@ pub fn ollama_from_env() -> (Ollama, String) {
     let url = env("OLLAMA_URL").unwrap_or_else(|| DEFAULT_OLLAMA_URL.to_string());
     let model = env("OLLAMA_MODEL").unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string());
     (Ollama::new(&url, &model), format!("{model} at {url}"))
+}
+
+/// When and whom outbound check-ins call (issue #22), from `RESIDENTS` and the `CHECKIN_*`
+/// settings, as `.env.example` describes them. Every resident's extension passes the same check
+/// as the dispatcher's, before any call is placed.
+pub fn schedule_from_env() -> Result<Schedule, Error> {
+    let residents: Vec<String> = env("RESIDENTS")
+        .unwrap_or_else(|| DEFAULT_RESIDENTS.to_string())
+        .split(',')
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty())
+        .collect();
+    for resident in &residents {
+        check_extension(resident).map_err(|e| format!("RESIDENTS: {e}"))?;
+    }
+    let defaults = Policy::default();
+    let policy = Policy {
+        attempts: number("CHECKIN_ATTEMPTS", defaults.attempts.into())? as u32,
+        retry_after: Duration::from_secs(number("CHECKIN_RETRY_AFTER_S", defaults.retry_after.as_secs())?),
+        ring: Duration::from_secs(number("CHECKIN_RING_S", defaults.ring.as_secs())?),
+    };
+    let every = match env("CHECKIN_EVERY_MIN") {
+        Some(_) => Some(Duration::from_secs(60 * number("CHECKIN_EVERY_MIN", 0)?)),
+        None => None,
+    };
+    Ok(Schedule { residents, now: switched_on("CHECKIN_NOW"), every, policy })
+}
+
+/// A whole number from the environment, at least 1, or `default` when unset.
+fn number(name: &str, default: u64) -> Result<u64, Error> {
+    let Some(value) = env(name) else { return Ok(default) };
+    match value.parse::<u64>() {
+        Ok(n) if n > 0 => Ok(n),
+        _ => Err(format!("{name}={value:?}: expected a whole number of at least 1").into()),
+    }
 }
 
 /// Loads the voice and the fixed lines, and checks the LLM answers, before any call.
@@ -129,13 +166,15 @@ pub async fn start_services<L: Llm>(stt: Stt, llm: L, llm_name: &str) -> Result<
     })
 }
 
-/// Answers one AudioSocket connection with a check-in. Returns once the call has ended and its
-/// log is written. `pbx` gives the call's Call control its PBX side once the UUID is known:
-/// AMI on a live call, a recorder in the eval.
+/// Answers one AudioSocket connection with a check-in: the resident calling 3100, or answering
+/// a call the agent placed, which `outbound` knows by its UUID. Returns once the call has ended
+/// and its log is written. `pbx` gives the call's Call control its PBX side once the UUID is
+/// known: AMI on a live call, a recorder in the eval.
 pub async fn answer<L: Llm + 'static>(
     stream: TcpStream,
     vad_model: &str,
     services: Services<L>,
+    outbound: &Outbound,
     pbx: impl FnOnce(CallControl, &Uuid) -> CallControl,
 ) -> Result<LineStats, Error> {
     // Asterisk sets TCP_NODELAY on its side (issue #4). Setting it here too sends each
@@ -144,12 +183,16 @@ pub async fn answer<L: Llm + 'static>(
     // Each call gets its own VAD: Silero carries state from one window to the next.
     let vad = Silero::new(vad_model)?;
     let (uuid, media, control, line) = line::accept(stream, services.record).await?;
-    eprintln!("agent: call started, UUID {uuid}");
+    let outbound_to = outbound.take(&uuid.to_string());
+    match &outbound_to {
+        Some(resident) => eprintln!("agent: call started, UUID {uuid}, placed to {resident}"),
+        None => eprintln!("agent: call started, UUID {uuid}"),
+    }
     let control = pbx(control, &uuid);
 
     let started = Instant::now();
     let calls_dir = services.calls_dir.clone();
-    check_in(uuid.to_string(), media, control, vad, services).await;
+    check_in(uuid.to_string(), outbound_to, media, control, vad, services).await;
     let stats = line.await??;
     log_stats(&uuid, started.elapsed(), &stats);
     if let Some(tape) = &stats.tape {

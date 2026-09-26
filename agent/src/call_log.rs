@@ -14,8 +14,11 @@ use crate::llm::{Status, TheirTurn};
 pub struct CallLog {
     /// The call's AudioSocket UUID, also the file's name.
     pub call: String,
-    /// The caller's extension. There is no resident list yet, so this is who the resident is.
+    /// The resident's extension: the caller's, or the one the agent dialled. Residents are known
+    /// by extension only (`RESIDENTS` in `.env`).
     pub resident: Option<String>,
+    /// Whether the agent placed the call, as a scheduled check-in (issue #22).
+    pub outbound: bool,
     /// Wall-clock start, in milliseconds since the Unix epoch.
     pub started_unix_ms: u128,
     pub duration_s: f64,

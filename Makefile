@@ -1,7 +1,7 @@
 # One target per build step. `make` alone lists them.
 .DEFAULT_GOAL := help
 .PHONY: help asterisk-build asterisk-config asterisk-up asterisk-down asterisk-logs asterisk-cli \
-	sip-accounts models espeak-data agent test-wav agent-test-wav test eval
+	sip-accounts models espeak-data agent checkin test-wav agent-test-wav test eval
 
 # whisper.cpp on an NVIDIA GPU (issue #52): with the CUDA toolkit installed, the agent and the
 # eval build with the `cuda` feature and hear with large-v3-turbo. Without it they build for the
@@ -71,6 +71,12 @@ espeak-data:
 # Ollama must be running: `ollama serve`, then `ollama pull` the model in .env once.
 agent: espeak-data ## Run the check-in agent natively in Ubuntu
 	cargo run --release -p agent $(CUDA_FEATURE)
+
+# The agent as `make agent` runs it, plus one round of outbound check-ins as soon as it is ready
+# (issue #22): it calls every extension in RESIDENTS, retrying as the CHECKIN_* settings in .env
+# say, and keeps running to answer calls until stopped.
+checkin: espeak-data ## Run the agent and call every resident now, with retries
+	CHECKIN_NOW=on cargo run --release -p agent $(CUDA_FEATURE)
 
 # A synthetic 12 s clip at 22.05 kHz, Piper's usual rate, so it is resampled twice on the
 # way out, as the agent's speech will be. 0-5 s: a short 440 Hz beep on every second, to

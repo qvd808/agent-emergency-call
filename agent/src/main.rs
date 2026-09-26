@@ -1,8 +1,11 @@
 //! The check-in agent (issue #18). Each call to extension 3100 gets the spoken check-in in
 //! `conversation.rs`: speech to text, the LLM's turn, and Piper's voice back down the line.
+//! It also calls residents itself, as `schedule.rs` says (issue #22): `CHECKIN_NOW` starts a
+//! round at startup (`make checkin`), `CHECKIN_EVERY_MIN` repeats one.
 //!
 //! With `TEST_WAV` set it is instead the audio harness from issues #16 and #17: each call
-//! plays that WAV at real-time pace, then transcribes and logs what the resident says.
+//! plays that WAV at real-time pace, then transcribes and logs what the resident says. It
+//! places no calls.
 //!
 //! Asterisk connects to us: the dialplan's `AudioSocket()` dials `host.docker.internal:9092`,
 //! which reaches this process on `127.0.0.1` (issue #27). Only loopback, so nothing on the
@@ -16,14 +19,15 @@ use std::time::Instant;
 use agent::audio::{CORE_RATE_HZ, resample_clip};
 use agent::call::{
     DEFAULT_VAD_MODEL, DEFAULT_WHISPER_MODEL, answer, env, log_stats, ollama_from_env,
-    start_services,
+    schedule_from_env, start_services,
 };
 use agent::conversation::Services;
 use agent::listen::listen;
 use agent::llm::Ollama;
+use agent::schedule::{self, Outbound};
 use agent::stt::{Stt, Whisper};
 use agent::telephony::ami::Ami;
-use agent::telephony::{core_duration, line};
+use agent::telephony::{Dialer, core_duration, line};
 use tokio::net::{TcpListener, TcpStream};
 use turn::vad::Silero;
 
@@ -40,6 +44,8 @@ async fn main() -> Result<(), Error> {
         eprintln!("agent: read settings from .env");
     }
     let listen = env("AUDIOSOCKET_LISTEN").unwrap_or_else(|| DEFAULT_LISTEN.to_string());
+    // Checked before the models load, so a wrong setting fails at once.
+    let schedule = schedule_from_env()?;
     let clip = match env("TEST_WAV") {
         Some(path) => {
             let clip = load_wav(Path::new(&path))?;
@@ -68,12 +74,43 @@ async fn main() -> Result<(), Error> {
 
     let listener = TcpListener::bind(&listen).await?;
     eprintln!("agent: listening for AudioSocket on {listen}");
+
+    // Only once the listener is up, so an answered call has somewhere to go.
+    let outbound = Outbound::default();
+    if let Some(services) = &services {
+        if schedule.now || schedule.every.is_some() {
+            let every = schedule.every.map_or("no repeat".into(), |e| {
+                format!("every {} min", e.as_secs() / 60)
+            });
+            let policy = &schedule.policy;
+            eprintln!(
+                "agent: outbound check-ins for {} ({}{every}): {} attempts, {} s apart, ringing {} s",
+                schedule.residents.join(", "),
+                if schedule.now { "now, then " } else { "" },
+                policy.attempts,
+                policy.retry_after.as_secs(),
+                policy.ring.as_secs(),
+            );
+            let dialer = Dialer(ami.clone());
+            let calls_dir = services.calls_dir.clone();
+            tokio::spawn(schedule::run(schedule, dialer, outbound.clone(), calls_dir));
+        } else {
+            eprintln!("agent: no outbound check-ins (CHECKIN_EVERY_MIN, or `make checkin`)");
+        }
+    }
+
     loop {
         let (stream, peer) = listener.accept().await?;
-        let (clip, stt, services, vad_model, ami) =
-            (clip.clone(), stt.clone(), services.clone(), vad_model.clone(), ami.clone());
+        let (clip, stt, services, vad_model, ami, outbound) = (
+            clip.clone(),
+            stt.clone(),
+            services.clone(),
+            vad_model.clone(),
+            ami.clone(),
+            outbound.clone(),
+        );
         tokio::spawn(async move {
-            if let Err(e) = call(stream, clip, stt, services, &vad_model, ami).await {
+            if let Err(e) = call(stream, clip, stt, services, &vad_model, ami, &outbound).await {
                 eprintln!("agent: {peer}: call failed: {e}");
             }
         });
@@ -112,9 +149,10 @@ async fn call(
     services: Option<Services<Ollama>>,
     vad_model: &str,
     ami: Option<Ami>,
+    outbound: &Outbound,
 ) -> Result<(), Error> {
     if let Some(services) = services {
-        answer(stream, vad_model, services, |control, uuid| match ami {
+        answer(stream, vad_model, services, outbound, |control, uuid| match ami {
             Some(ami) => control.with_ami(ami, uuid.to_string()),
             None => control,
         })

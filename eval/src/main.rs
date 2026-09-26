@@ -31,6 +31,7 @@ use agent::call::{
 };
 use agent::conversation::{Services, TURN_END};
 use agent::llm::{Head, Llm, Message, Reply};
+use agent::schedule::Outbound;
 use agent::stt::{Stt, Whisper};
 use agent::telephony::Recorder;
 use agent::telephony::audiosocket::Uuid;
@@ -127,12 +128,14 @@ async fn main() -> Result<(), Error> {
             let recorder = Recorder { caller: RESIDENT_EXTENSION.to_string(), transfers: transfers_tx };
             let call = caller::run(addr, uuid, acts(script), fallback.clone(), transfers);
             let agent = async {
+                // Every scripted resident calls in; the eval places no calls.
+                let inbound_only = Outbound::default();
                 let (stream, _) = listener.accept().await?;
                 let pbx = |control: agent::telephony::CallControl, _: &Uuid| control.with_recorder(recorder);
                 if persona.failing_llm {
-                    answer(stream, &vad_model, failing.clone(), pbx).await
+                    answer(stream, &vad_model, failing.clone(), &inbound_only, pbx).await
                 } else {
-                    answer(stream, &vad_model, services.clone(), pbx).await
+                    answer(stream, &vad_model, services.clone(), &inbound_only, pbx).await
                 }
             };
             let (outcome, answered) = tokio::join!(call, agent);

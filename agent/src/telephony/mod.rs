@@ -1,7 +1,7 @@
 //! The telephony seam (issue #13). The agent's core sees a call's audio only through [`Media`]
 //! and never sees AudioSocket, channel names or the line's format. Call control is
-//! [`CallControl`]: hanging up, and transferring to the dispatcher through AMI (issue #20);
-//! placing calls lands with outbound check-ins.
+//! [`CallControl`]: hanging up, and transferring to the dispatcher through AMI (issue #20).
+//! Placing a call is [`Dial`], since it comes before there is a call (issue #22).
 //!
 //! Media is a plain handle of channels rather than a trait: an adapter builds one per call and
 //! runs its own task behind it. A Twilio adapter would build the same handle.
@@ -138,6 +138,41 @@ impl CallControl {
     /// words finish, wait for a mark queued after them first.
     pub fn hangup(&self) {
         let _ = self.commands.send(Command::Hangup);
+    }
+}
+
+/// What became of a call the agent placed (issue #13).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Placed {
+    /// The resident picked up. The call's media follows, carrying the id it was placed with.
+    Answered,
+    /// It never reached the resident, and why, for the log only.
+    Missed(String),
+}
+
+/// Places calls: the part of Call control that comes before there is a call (issue #22).
+pub trait Dial: Send + Sync {
+    /// Rings `extension` for up to `ring`, and says whether the resident answered. `call` is
+    /// the id the answered call's media will carry. The core picks it before dialling, so it
+    /// knows the call before the media can arrive: over AMI, the answer and the media come in
+    /// either order (issue #5's research, section 2).
+    fn place(&self, extension: &str, call: &str, ring: Duration)
+    -> impl Future<Output = Placed> + Send;
+}
+
+/// Places calls through AMI. Without AMI, every call is missed, so a scheduled check-in still
+/// ends in a missed check-in alert rather than silence.
+#[derive(Clone)]
+pub struct Dialer(pub Option<Ami>);
+
+impl Dial for Dialer {
+    async fn place(&self, extension: &str, call: &str, ring: Duration) -> Placed {
+        let Some(ami) = &self.0 else {
+            return Placed::Missed(NO_AMI.to_string());
+        };
+        ami.originate(extension, call, ring)
+            .await
+            .unwrap_or_else(|e| Placed::Missed(format!("AMI: {e}")))
     }
 }
 

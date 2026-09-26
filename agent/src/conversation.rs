@@ -100,6 +100,9 @@ const TAIL: f64 = 0.5;
 /// Fixed lines, spoken the same way on every call and never written by the LLM (issue #10).
 pub const GREETING_INBOUND: &str =
     "Hello. This is the automated check-in assistant. How are you feeling today?";
+/// For a check-in the agent placed (issue #22). Worded in issue #10; no resident's name.
+pub const GREETING_OUTBOUND: &str = "Hello. This is your daily check-in call. \
+                                     I'm an automated assistant. How are you feeling today?";
 pub const HOLDING: &str = "Sorry, give me a moment.";
 pub const ESCALATION: &str = "I'm connecting you to a person now. Please stay on the line. \
                               If you are in danger, call nine one one yourself as soon as you can.";
@@ -122,6 +125,7 @@ pub const STILL_THERE: [&str; 2] = [
 /// or reword them.
 pub struct Lines {
     pub greeting: Vec<i16>,
+    pub greeting_outbound: Vec<i16>,
     pub holding: Vec<i16>,
     pub escalation: Vec<i16>,
     pub still_there: [Vec<i16>; 2],
@@ -132,6 +136,7 @@ impl Lines {
     pub async fn synthesise(tts: &Tts) -> Result<Self, Error> {
         Ok(Lines {
             greeting: tts.speak(GREETING_INBOUND, Tone::Warm).await?.audio,
+            greeting_outbound: tts.speak(GREETING_OUTBOUND, Tone::Warm).await?.audio,
             holding: tts.speak(HOLDING, Tone::Warm).await?.audio,
             escalation: tts.speak(ESCALATION, Tone::Steady).await?.audio,
             still_there: [
@@ -694,9 +699,11 @@ impl<L: Llm + 'static> Call<L> {
 }
 
 /// Runs one check-in until either side hangs up or the call is transferred. `call` names the
-/// call in the log.
+/// call in the log. `outbound_to` is the resident's extension when the agent placed the call
+/// (issue #22), which also picks the outbound greeting.
 pub async fn check_in<L: Llm + 'static>(
     call: String,
+    outbound_to: Option<String>,
     media: Media,
     control: CallControl,
     mut vad: Silero,
@@ -705,10 +712,17 @@ pub async fn check_in<L: Llm + 'static>(
     let Media { mut frames, mut played, speaker } = media;
     let started_unix_ms =
         SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
-    // Who is calling, for the log and the concern flag. Looked up while the greeting plays.
+    let outbound = outbound_to.is_some();
+    // Who the resident is, for the log and the concern flag: the extension the agent dialled,
+    // or else the caller's, looked up while the greeting plays.
     let lookup = {
         let control = control.clone();
-        tokio::spawn(async move { control.channel().await })
+        tokio::spawn(async move {
+            match outbound_to {
+                Some(resident) => Ok(Some(resident)),
+                None => control.channel().await.map(|channel| channel.caller),
+            }
+        })
     };
     let mut c = Call {
         id: call,
@@ -758,9 +772,13 @@ pub async fn check_in<L: Llm + 'static>(
     // The resident's latest audio, ending at the segmenter's clock, for Smart Turn.
     let mut recent: VecDeque<f32> = VecDeque::with_capacity(RECENT_SAMPLES + WINDOW);
 
-    let greeting = c.services.lines.greeting.clone();
-    c.say(greeting, GREETING_INBOUND, After::Listen);
-    eprintln!("agent: {}: said {GREETING_INBOUND:?}", c.id);
+    let (greeting, words) = if outbound {
+        (c.services.lines.greeting_outbound.clone(), GREETING_OUTBOUND)
+    } else {
+        (c.services.lines.greeting.clone(), GREETING_INBOUND)
+    };
+    c.say(greeting, words, After::Listen);
+    eprintln!("agent: {}: said {words:?}", c.id);
 
     let ended_by = 'call: loop {
         // Copied out, so the timers below don't borrow `c`.
@@ -1084,7 +1102,7 @@ pub async fn check_in<L: Llm + 'static>(
         record_transfer(&mut c, task.await);
     }
     let resident = match lookup.await {
-        Ok(Ok(channel)) => channel.caller,
+        Ok(Ok(resident)) => resident,
         Ok(Err(e)) => {
             eprintln!("agent: {}: couldn't look up the caller: {e}", c.id);
             None
@@ -1098,6 +1116,7 @@ pub async fn check_in<L: Llm + 'static>(
     let log = CallLog {
         call: c.id.clone(),
         resident,
+        outbound,
         started_unix_ms,
         duration_s: c.at(),
         transcript: c.transcript,
